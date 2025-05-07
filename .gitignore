@@ -1,0 +1,9 @@
+backtest_results/
+config.json
+data/
+freqaimodels/
+hyperopts/
+logs/
+notebooks/
+*.html
+*.png
