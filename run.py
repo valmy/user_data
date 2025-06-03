@@ -37,13 +37,13 @@ config["strategy"] = "FractalStrategy"
 data_location = config["datadir"]
 
 # start and end date
-start_date = "2025-04-03"
-end_date = "2025-04-03"
+start_date = "2025-05-31"
+end_date = "2025-05-31"
 base_currency = "USDT" # Assuming USDT as the common quote and stake currency
 stake_currency = "USDT"
 
 # pairs_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'SUI', 'TRX', 'LINK']
-pairs_symbols = ['SUI']
+pairs_symbols = ['BTC']
 
 from freqtrade.data.btanalysis import load_backtest_data, load_backtest_stats
 
@@ -173,25 +173,38 @@ for pair_symbol in pairs_symbols:
     # Print filtered trades (trades_red) for the plot
     print(f"\nFiltered Trades for {pair} (trades_red for plot):")
     if not trades_red.empty:
-        print(trades_red[['open_date', 'pair', 'is_short', 'open_rate', 'profit_ratio',
-                          'profit_abs', 'exit_reason', 'trade_duration']])
+        print(trades_red[['open_date', 'pair', 'is_short', 'open_rate', 'close_rate',
+                          'profit_ratio', 'exit_reason', 'trade_duration']])
         # Print corresponding data points from data_red
         print("\nCorresponding Data Points for Trades:")
         for index, trade in trades_red.iterrows():
-            trade_date = trade['open_date']
+            # trade_date = trade['open_date']
+            # # Find the closest data point in data_red
+            # closest_data_point = data_red.iloc[
+            #     data_red.index.get_loc(trade_date)
+            # ]
+            # print(f"Trade Date: {trade_date}, "
+            #       f"Open: {closest_data_point['open']:.8f}, "
+            #       f"Close: {closest_data_point['close']:.8f}, "
+            #       f"High: {closest_data_point['high']:.8f}, "
+            #       f"Low: {closest_data_point['low']:.8f}, "
+            #       f"Chop 15m: {closest_data_point.get('chop_15m', 'N/A'):.2f}, "
+            #       f"Chop 1h: {closest_data_point.get('chop_1h', 'N/A'):.2f}, "
+            #       f"Enter Long: {closest_data_point.get('enter_long', 'N/A')}, "
+            #       f"Enter Short: {closest_data_point.get('enter_short', 'N/A')}")
+            close_date = trade['close_date']
             # Find the closest data point in data_red
             closest_data_point = data_red.iloc[
-                data_red.index.get_loc(trade_date)
+                data_red.index.get_loc(close_date)
             ]
-            print(f"Trade Date: {trade_date}, "
-                  f"Open: {closest_data_point['open']:.8f}, "
-                  f"Close: {closest_data_point['close']:.8f}, "
-                  f"High: {closest_data_point['high']:.8f}, "
-                  f"Low: {closest_data_point['low']:.8f}, "
-                  f"Chop 15m: {closest_data_point.get('chop_15m', 'N/A'):.2f}, "
-                  f"Chop 1h: {closest_data_point.get('chop_1h', 'N/A'):.2f}, "
-                  f"Enter Long: {closest_data_point.get('enter_long', 'N/A')}, "
-                  f"Enter Short: {closest_data_point.get('enter_short', 'N/A')}")
+            print(f"Trade Date: {trade['open_date']}, "
+                  f"Close Date: {trade['close_date']}"
+                  f"O: {closest_data_point['open']:.4f}, "
+                  f"C: {closest_data_point['close']:.4f}, "
+                  f"H: {closest_data_point['high']:.4f}, "
+                  f"L: {closest_data_point['low']:.4f}, "
+                  f"peak: {closest_data_point.get('peak_15m', 'N/A'):.4f}, "
+                  f"trough: {closest_data_point.get('trough_15m', 'N/A'):.4f}")
 
     else:
         print(f"No trades found for {pair} in the specified date range for plotting.")

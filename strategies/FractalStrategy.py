@@ -59,18 +59,18 @@ class FractalStrategy(IStrategy):
 
     # Minimal ROI designed for the strategy
     minimal_roi = {
-        "240": 0.12,   # After 240 minutes, exit at 12% profit
-        "1440": 0.04,  # After 24 hours, exit at 4% profit
+        # "240": 0.12,   # After 240 minutes, exit at 12% profit
+        # "1440": 0.04,  # After 24 hours, exit at 4% profit
     }
 
     # Optimal stoploss designed for the strategy
-    stoploss = -0.02
+    stoploss = -0.10
 
     # Trailing stoploss to lock in profits as trend continues
     trailing_stop = False
     trailing_stop_positive = 0.01
     trailing_stop_positive_offset = 0.02
-    trailing_only_offset_is_reached = True
+    trailing_only_offset_is_reached = False
 
     # Run "populate_indicators()" only for new candle
     process_only_new_candles = True
@@ -79,6 +79,7 @@ class FractalStrategy(IStrategy):
     use_exit_signal = True
     exit_profit_only = False
     ignore_roi_if_entry_signal = False
+    use_custom_stoploss = True
 
     # Number of candles the strategy requires before producing valid signals
     startup_candle_count: int = 50
@@ -328,10 +329,11 @@ class FractalStrategy(IStrategy):
                 #     dataframe['lower_low'] &
                 #     dataframe['volume_increased']
                 # ) |
+                (dataframe['higher_high_15m'] == False) |
                 # Break below key support
                 (dataframe['close'] < dataframe['trough_15m'])
                 # Laguerre RSI exit condition
-                # (qtpylib.crossed_below(dataframe['laguerre'], self.exit_long_laguerre_level.value))
+                | (qtpylib.crossed_below(dataframe['laguerre'], self.exit_long_laguerre_level.value))
             ),
             'exit_long'] = 1
 
@@ -347,14 +349,53 @@ class FractalStrategy(IStrategy):
                     #     dataframe['higher_low'] &
                     #     dataframe['volume_increased']
                     # ) |
+                    (dataframe['lower_low_15m'] == False) |
                     # Break above key resistance
                     (dataframe['close'] > dataframe['peak_15m'])
                     # Laguerre RSI exit condition
-                    # (qtpylib.crossed_above(dataframe['laguerre'], self.exit_short_laguerre_level.value))
+                    | (qtpylib.crossed_above(dataframe['laguerre'], self.exit_short_laguerre_level.value))
                 ),
                 'exit_short'] = 1
 
         return dataframe
+
+    def custom_stop_loss(self, pair: str, trade: Trade, current_time: datetime,
+                         current_rate: float, current_profit: float, **kwargs) -> Optional[float]:
+        """
+        Custom stop loss based on 15m timeframe's troughs for long trades
+        and peaks for short trades.
+        These levels are identified in the populate_informative_15m method.
+
+        Returns:
+            Optional[float]: Percentage value for stoploss relative to current_rate,
+                             or None to use the default stoploss.
+        """
+        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        if dataframe.empty:
+            return None
+
+        last_candle = dataframe.iloc[-1].squeeze()
+
+        stop_loss_price = None
+
+        if not trade.is_short:  # Long trade
+            # Stop loss based on the last known trough from the 15m timeframe
+            if 'trough_15m' in last_candle and not pd.isna(last_candle['trough_15m']):
+                stop_loss_price = last_candle['trough_15m'] * 0.998
+        else:  # Short trade
+            # Stop loss based on the last known peak from the 15m timeframe
+            if 'peak_15m' in last_candle and not pd.isna(last_candle['peak_15m']):
+                stop_loss_price = last_candle['peak_15m'] * 1.002
+
+        if stop_loss_price is not None:
+            # Calculate the stoploss percentage from the absolute price
+            # Ensure is_short is correctly passed for short trades
+            return stoploss_from_absolute(stop_loss_price, current_rate,
+                                          is_short=trade.is_short, leverage=trade.leverage)
+
+        # If stop_loss_price is not set, return None to use the default stoploss.
+        return None
+
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
                  proposed_leverage: float, max_leverage: float, side: str,
