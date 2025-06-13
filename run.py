@@ -283,46 +283,42 @@ for pair_symbol in pairs_symbols:
 
     # Add markers for higher_high at major timeframe peaks
     # Only at the start of each hour for hourly timeframes
-    major_higher_high_col = f'higher_high_{major_timeframe}'
     major_peak_col = f'peak_{major_timeframe}'
-    major_ha_close = f'ha_close_{major_timeframe}'
-    major_ha_open = f'ha_open_{major_timeframe}'
+    major_ha_upswing = f'ha_upswing_{major_timeframe}'
+    major_ha_downswing = f'ha_downswing_{major_timeframe}'
 
-    if (major_higher_high_col in data_red.columns and
+    if (major_ha_upswing in data_red.columns and
         major_peak_col in data_red.columns and
         not data_red.empty):
         # Filter data to the first entry of each hour where the heikin ashi is up
-        hh_data = data_red[(data_red[major_ha_close] > data_red[major_ha_open]) &
-                (data_red[major_ha_close].shift(1) >= data_red[major_ha_open].shift(1)) &
+        hh_data = data_red[data_red[major_ha_upswing] &
                 (data_red.index.minute == 0)]
         if not hh_data.empty:
             fig.add_trace(go.Scatter(
                 x=hh_data.date,
                 y=hh_data[major_peak_col],
                 mode='markers',
-                name=f'Higher High ({major_timeframe})',
+                name=f'Up Swing ({major_timeframe})',
                 marker=dict(symbol='triangle-up', color=px.colors.qualitative.Pastel[4]),
                 hoverinfo='skip'
             ), row=1, col=1)
 
     # Add markers for lower_low at major timeframe troughs
     # Add markers for lower_low at major timeframe troughs, only at the start of each hour
-    major_lower_low_col = f'lower_low_{major_timeframe}'
     major_trough_col = f'trough_{major_timeframe}'
 
-    if (major_lower_low_col in data_red.columns and
+    if (major_ha_downswing in data_red.columns and
         major_trough_col in data_red.columns and
         not data_red.empty):
         # Filter data to the first entry of each hour where the heikin ashi is down
-        ll_data = data_red[(data_red[major_ha_close] < data_red[major_ha_open]) &
-                (data_red[major_ha_close].shift(1) <= data_red[major_ha_open].shift(1)) &
+        ll_data = data_red[data_red[major_ha_downswing] &
                 (data_red.index.minute == 0)]
         if not ll_data.empty:
             fig.add_trace(go.Scatter(
                 x=ll_data.date,
                 y=ll_data[major_trough_col],
                 mode='markers',
-                name=f'Lower Low ({major_timeframe})',
+                name=f'Down Swing ({major_timeframe})',
                 marker=dict(symbol='triangle-down', color=px.colors.qualitative.Pastel[5]),
                 hoverinfo='skip'
             ), row=1, col=1)

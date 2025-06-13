@@ -85,8 +85,27 @@ class FractalStrategy(IStrategy):
     ignore_roi_if_entry_signal = False
     use_custom_stoploss = True
 
+    signal_timeframe_minutes = timeframe_to_minutes(timeframe)
+    primary_timeframe_minutes = timeframe_to_minutes(primary_timeframe)
+    major_timeframe_minutes = timeframe_to_minutes(major_timeframe)
+
+    # Calculate ratios
+    if signal_timeframe_minutes == 0:
+        ratio_primary_to_signal = float('inf') # Or handle as an error
+    else:
+        ratio_primary_to_signal = primary_timeframe_minutes / signal_timeframe_minutes
+
+    if primary_timeframe_minutes == 0:
+        ratio_major_to_primary = float('inf') # Or handle as an error
+    else:
+        ratio_major_to_primary = major_timeframe_minutes / primary_timeframe_minutes
+
+    # ratio major to signal
+    ratio_major_to_signal = major_timeframe_minutes / signal_timeframe_minutes
+
+
     # Number of candles the strategy requires before producing valid signals
-    startup_candle_count: int = max(50, 3 * 4 * 3)
+    startup_candle_count: int = max(50, 3 * ratio_major_to_signal)
 
     # Parameters for tuning
     trend_strength = IntParameter(20, 50, default=25, space="buy")
@@ -198,7 +217,9 @@ class FractalStrategy(IStrategy):
         dataframe['ha_high'] = heikinashi['high']
         dataframe['ha_low'] = heikinashi['low']
         dataframe['ha_bullish'] = (heikinashi['close'] > heikinashi['open']).astype(bool)
+        dataframe['ha_upswing'] = dataframe['ha_bullish'].rolling(3).sum() >= 2
         dataframe['ha_bearish'] = (heikinashi['close'] < heikinashi['open']).astype(bool)
+        dataframe['ha_downswing'] = dataframe['ha_bearish'].rolling(3).sum() >= 2
 
         # Donchian Channels (using 5-period window)
         # These are used for trend identification
@@ -323,11 +344,19 @@ class FractalStrategy(IStrategy):
                 # logger.debug(f"cond_ptf_chop dtype: {cond_ptf_chop.dtype}, head: {cond_ptf_chop.head(3).to_list()}")
                 # logger.debug(f"cond_mtf_chop dtype: {cond_mtf_chop.dtype}, head: {cond_mtf_chop.head(3).to_list()}")
 
-                # Ensure shifted boolean columns are boolean and NaNs are handled
-                ha_bullish_s1 = df[f'ha_bullish_{self.major_timeframe}'].shift(1).astype(float).fillna(0.0).astype(bool)
-                ha_bullish_s2 = df[f'ha_bullish_{self.major_timeframe}'].shift(2).astype(float).fillna(0.0).astype(bool)
-                ha_bullish_s3 = df[f'ha_bullish_{self.major_timeframe}'].shift(3).astype(float).fillna(0.0).astype(bool)
-                # logger.debug(f"ha_bullish_{self.major_timeframe} shift(3) (ha_bullish_s3) dtype: {ha_bullish_s3.dtype}, head: {ha_bullish_s3.head(3).to_list()}")
+                # --- Debugging ---
+                # Get the ha_upswing from the informative major timeframe
+                ha_upswing_col = f'ha_upswing_{self.major_timeframe}'
+                if ha_upswing_col not in df.columns:
+                    logger.error(f"ha_upswing column {ha_upswing_col} not found in dataframe columns: {df.columns.to_list()}")
+                    return df
+
+                # Get the ha_downswing from the informative major timeframe
+                ha_downswing_col = f'ha_downswing_{self.major_timeframe}'
+                if ha_downswing_col not in df.columns:
+                    logger.error(f"ha_downswing column {ha_downswing_col} not found in dataframe columns: {df.columns.to_list()}")
+                    return df
+
                 # --- End Debugging ---
 
                 # Pre-calculate common conditions for better performance
@@ -344,7 +373,7 @@ class FractalStrategy(IStrategy):
                     df['strong_volume'] &
                     df['above_ema20'] &
                     # at least 2 of the last 3 major heikin ashi candles are bullish
-                    (ha_bullish_s1 | ha_bullish_s2) & ha_bullish_s3 &
+                    df[ha_upswing_col] &
                     # enough energy (using pre-calculated conditions)
                     cond_ptf_chop &
                     cond_mtf_chop
@@ -352,17 +381,13 @@ class FractalStrategy(IStrategy):
 
                 # SHORT Entry Conditions
                 short_condition = (
-                    # at least 2 of the last 3 major heikin ashi candles are bearish
-                    # Ensure shifted boolean columns are boolean and NaNs are handled
-                    (df[f'ha_bearish_{self.major_timeframe}'].shift(1).astype(float).fillna(0.0).astype(bool) | \
-                     df[f'ha_bearish_{self.major_timeframe}'].shift(2).astype(float).fillna(0.0).astype(bool)) & \
-                    df[f'ha_bearish_{self.major_timeframe}'].shift(3).astype(float).fillna(0.0).astype(bool)
-                ) & (
                     # signal: laguerre crosses below sell_laguerre_level
                     (qtpylib.crossed_below(dataframe['laguerre'], self.sell_laguerre_level.value)) &
                     # confirmation: strong volume
                     df['strong_volume'] &
                     ~df['above_ema20'] &
+                    # at least 2 of the last 3 major heikin ashi candles are bearish
+                    df[ha_downswing_col] &
                     # enough energy
                     cond_ptf_chop &
                     cond_mtf_chop
