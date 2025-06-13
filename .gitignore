@@ -1,5 +1,6 @@
 backtest_results/
 config.json
+config-hype.json
 data/
 freqaimodels/
 hyperopts/

@@ -33,19 +33,23 @@ import talib.abstract as ta
 import pandas_ta as pta
 from technical import indicators, qtpylib
 
+import logging
+import traceback # Import traceback for detailed error logging
+logger = logging.getLogger(__name__)
 
 class FractalStrategy(IStrategy):
     """
-    Strategy based on Dow Theory principles for trend detection.
+    Strategy based on Fractal Energy principles by Doc Severson.
 
-    Key Dow Theory principles implemented:
-    1. Primary trends identification using higher timeframe
-    2. Secondary trend corrections using mid timeframe
-    3. Confirmation through volume
-    4. Trend continuation until valid reversal signals
+    Key Fractal Energy principles implemented:
+    1. Fractal pattern recognition for market structure
+    2. Energy accumulation and distribution cycles (Choppiness Index)
+    3. Momentum confirmation through volume and price action
+    4. Use of Laguerre RSI for entry signals
+    5. Use contant risk per trade, let compounding profits
 
-    The strategy uses multiple timeframes to align with Dow Theory's
-    concept of primary, secondary, and minor trends.
+    The strategy uses multiple timeframes to identify fractal patterns
+    and energy cycles across different market scales.
     """
     INTERFACE_VERSION = 3
 
@@ -64,12 +68,12 @@ class FractalStrategy(IStrategy):
     }
 
     # Optimal stoploss designed for the strategy
-    stoploss = -0.10
+    stoploss = -0.20
 
     # Trailing stoploss to lock in profits as trend continues
     trailing_stop = False
-    trailing_stop_positive = 0.01
-    trailing_stop_positive_offset = 0.02
+    trailing_stop_positive = 0.10
+    trailing_stop_positive_offset = 0.0
     trailing_only_offset_is_reached = False
 
     # Run "populate_indicators()" only for new candle
@@ -82,7 +86,7 @@ class FractalStrategy(IStrategy):
     use_custom_stoploss = True
 
     # Number of candles the strategy requires before producing valid signals
-    startup_candle_count: int = 50
+    startup_candle_count: int = max(50, 3 * 4 * 3)
 
     # Parameters for tuning
     trend_strength = IntParameter(20, 50, default=25, space="buy")
@@ -94,30 +98,39 @@ class FractalStrategy(IStrategy):
     buy_laguerre_level = DecimalParameter(0.1, 0.4, default=0.2, decimals=1, space="buy", load=True, optimize=True)
     sell_laguerre_level = DecimalParameter(0.6, 0.9, default=0.8, decimals=1, space="sell", load=True, optimize=True) # For short entry, cross below this
     exit_long_laguerre_level = DecimalParameter(0.6, 0.9, default=0.8, decimals=1, space="sell", load=True, optimize=True)
+
+    # Choppiness Index parameters
+    primary_chop_threshold = IntParameter(40, 60, default=45, space="buy")
+    major_chop_threshold = IntParameter(35, 55, default=40, space="buy")
+
+    # Custom trade size parameters
+    max_risk_per_trade = DecimalParameter(0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=True)
+
+    _force_leverage_one_for_this_trade: bool = False
     exit_short_laguerre_level = DecimalParameter(0.1, 0.4, default=0.2, decimals=1, space="buy", load=True, optimize=True)
 
     def informative_pairs(self):
         """
         Define additional, informative pair/interval combinations to be cached from the exchange.
-        We need higher timeframes for primary trend detection and secondary trend confirmations.
+        We need higher timeframes for primary trend detection and major trend confirmations.
         """
         pairs = self.dp.current_whitelist()
         informative_pairs = []
 
-        # 15m timeframe for primary trend detection
+        # Primary timeframe for trend detection
         for pair in pairs:
-            informative_pairs.append((pair, "15m"))
+            informative_pairs.append((pair, self.primary_timeframe))
 
-        # 1h timeframe for major trend confirmation
+        # Major timeframe for trend confirmation
         for pair in pairs:
-            informative_pairs.append((pair, "1h"))
+            informative_pairs.append((pair, self.major_timeframe))
 
         return informative_pairs
 
-    @informative('15m')
-    def populate_informative_15m(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+    @informative(primary_timeframe)
+    def populate_informative_primary(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Populate indicators for primary trend identification on 15m timeframe
+        Populate indicators for primary trend identification on primary_timeframe timeframe
         """
         # Donchian Channels (using 5-period window)
         # These are used for trend identification
@@ -149,9 +162,9 @@ class FractalStrategy(IStrategy):
         # Replace 0s (flat periods) with NA, then forward-fill the last known trend
         dataframe['peak_trend_temp'] = dataframe['peak_trend_temp'].replace(0, pd.NA).ffill()
         # higher_high is True if the prevailing trend of donchian_upper is upwards (1)
-        dataframe['higher_high'] = (dataframe['peak_trend_temp'] == 1).fillna(False)
+        dataframe['higher_high'] = (dataframe['peak_trend_temp'] == 1).fillna(False).astype(bool)
         # lower_high is True if the prevailing trend of donchian_upper is downwards (-1)
-        dataframe['lower_high'] = (dataframe['peak_trend_temp'] == -1).fillna(False)
+        dataframe['lower_high'] = (dataframe['peak_trend_temp'] == -1).fillna(False).astype(bool)
 
         dataframe['trough_trend_temp'] = 0
         dataframe.loc[dataframe['trough'] > dataframe['trough'].shift(1), 'trough_trend_temp'] = 1
@@ -161,23 +174,32 @@ class FractalStrategy(IStrategy):
         dataframe['trough_trend_temp'] = dataframe['trough_trend_temp'].replace(0, pd.NA).ffill()
 
         # higher_low is True if the prevailing trend of donchian_lower is upwards (1)
-        dataframe['higher_low'] = (dataframe['trough_trend_temp'] == 1).fillna(False)
+        dataframe['higher_low'] = (dataframe['trough_trend_temp'] == 1).fillna(False).astype(bool)
         # lower_low is True if the prevailing trend of donchian_lower is downwards (-1)
-        dataframe['lower_low'] = (dataframe['trough_trend_temp'] == -1).fillna(False)
+        dataframe['lower_low'] = (dataframe['trough_trend_temp'] == -1).fillna(False).astype(bool)
 
         # Note: You might want to drop the temporary columns if they are not used elsewhere:
         dataframe.drop(['peak_trend_temp', 'trough_trend_temp'], axis=1, inplace=True)
 
         # Choppiness Index
         dataframe['chop'] = pta.chop(dataframe['high'], dataframe['low'], dataframe['close'], length=14)
-
         return dataframe
 
-    @informative('1h')
-    def populate_informative_1h(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+    @informative(major_timeframe)
+    def populate_informative_major(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Populate indicators for major trend confirmation on 1h timeframe
+        Populate indicators for major trend confirmation on major_timeframe timeframe
         """
+
+        # Heikin Ashi Strategy
+        heikinashi = qtpylib.heikinashi(dataframe)
+        dataframe['ha_open'] = heikinashi['open']
+        dataframe['ha_close'] = heikinashi['close']
+        dataframe['ha_high'] = heikinashi['high']
+        dataframe['ha_low'] = heikinashi['low']
+        dataframe['ha_bullish'] = (heikinashi['close'] > heikinashi['open']).astype(bool)
+        dataframe['ha_bearish'] = (heikinashi['close'] < heikinashi['open']).astype(bool)
+
         # Donchian Channels (using 5-period window)
         # These are used for trend identification
         dataframe['donchian_upper'] = dataframe['high'].rolling(window=5).max()
@@ -208,9 +230,9 @@ class FractalStrategy(IStrategy):
         # Replace 0s (flat periods) with NA, then forward-fill the last known trend
         dataframe['peak_trend_temp'] = dataframe['peak_trend_temp'].replace(0, pd.NA).ffill()
         # higher_high is True if the prevailing trend of donchian_upper is upwards (1)
-        dataframe['higher_high'] = (dataframe['peak_trend_temp'] == 1).fillna(False)
+        dataframe['higher_high'] = (dataframe['peak_trend_temp'] == 1).fillna(False).astype(bool)
         # lower_high is True if the prevailing trend of donchian_upper is downwards (-1)
-        dataframe['lower_high'] = (dataframe['peak_trend_temp'] == -1).fillna(False)
+        dataframe['lower_high'] = (dataframe['peak_trend_temp'] == -1).fillna(False).astype(bool)
 
         dataframe['trough_trend_temp'] = 0
         dataframe.loc[dataframe['trough'] > dataframe['trough'].shift(1), 'trough_trend_temp'] = 1
@@ -220,9 +242,9 @@ class FractalStrategy(IStrategy):
         dataframe['trough_trend_temp'] = dataframe['trough_trend_temp'].replace(0, pd.NA).ffill()
 
         # higher_low is True if the prevailing trend of donchian_lower is upwards (1)
-        dataframe['higher_low'] = (dataframe['trough_trend_temp'] == 1).fillna(False)
+        dataframe['higher_low'] = (dataframe['trough_trend_temp'] == 1).fillna(False).astype(bool)
         # lower_low is True if the prevailing trend of donchian_lower is downwards (-1)
-        dataframe['lower_low'] = (dataframe['trough_trend_temp'] == -1).fillna(False)
+        dataframe['lower_low'] = (dataframe['trough_trend_temp'] == -1).fillna(False).astype(bool)
 
         # Note: You might want to drop the temporary columns if they are not used elsewhere:
         dataframe.drop(['peak_trend_temp', 'trough_trend_temp'], axis=1, inplace=True)
@@ -236,10 +258,14 @@ class FractalStrategy(IStrategy):
         """
         Adds indicators for secondary trends and generates buy/sell signals
         """
+        # Get informative dataframes
+        informative_primary = self.dp.get_pair_dataframe(pair=metadata['pair'], timeframe=self.primary_timeframe)
+        informative_major = self.dp.get_pair_dataframe(pair=metadata['pair'], timeframe=self.major_timeframe)
+
         # Secondary trend indicators
         dataframe['ema20'] = ta.EMA(dataframe, timeperiod=20)
         dataframe['ema50'] = ta.EMA(dataframe, timeperiod=50)
-        dataframe['ema100'] = ta.EMA(dataframe, timeperiod=100)
+        dataframe['ema200'] = ta.EMA(dataframe, timeperiod=200)
 
         # Laguerre RSI
         dataframe['laguerre'] = indicators.laguerre(dataframe, gamma=self.laguerre_gamma.value)
@@ -252,7 +278,6 @@ class FractalStrategy(IStrategy):
         dataframe['volume_increased'] = dataframe['volume'] > (dataframe['volume_mean'] * self.volume_threshold.value)
 
         # Donchian Channels (using 30-period window)
-        # These are used for trend identification
         dataframe['donchian_upper'] = dataframe['high'].rolling(window=30).max()
         dataframe['donchian_lower'] = dataframe['low'].rolling(window=30).min()
 
@@ -263,145 +288,379 @@ class FractalStrategy(IStrategy):
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Based on Dow Theory principles, identify entry signals
+        Generate entry signals with improved conditions, error handling, and optimizations
         """
-        # Default values
-        dataframe['enter_long'] = 0
-        dataframe['enter_short'] = 0
+        try:
+            # Create a copy to avoid SettingWithCopyWarning
+            df = dataframe.copy()
+            # logger.info(f"DataFrame columns at start of populate_entry_trend: {df.columns.to_list()}")
 
-        # LONG entries - Primary uptrend confirmed by secondary trend bounce
-        dataframe.loc[
-            (
-                # Major trend is up (from 1h timeframe)
-                # dataframe['major_uptrend_1h'] &
-                # Volume confirms the movement
-                # dataframe['volume_increased'] &
-                (dataframe['volume'] > 0) &  # Ensure volume is not 0
-                # Higher peak and higher trough condition
-                (dataframe['higher_high_1h']) &
-                (dataframe['higher_low_1h']) &
-                # Enough energy on major and primary timeframe
-                (dataframe['chop_1h'] > 40) &
-                (dataframe['chop_15m'] > 45) &
-                # Laguerre RSI confirmation
-                (qtpylib.crossed_above(dataframe['laguerre'], self.buy_laguerre_level.value))
-            ),
-            'enter_long'] = 1
+            # Initialize signal columns
+            df['enter_long'] = 0
+            df['enter_short'] = 0
 
-        # SHORT entries - Primary downtrend confirmed by secondary trend bounce
-        if self.can_short:
-            dataframe.loc[
-                (
-                    # Major trend is down (from 1h timeframe)
-                    # dataframe['major_downtrend_1h'] &
-                    # Volume confirms the movement
-                    # dataframe['volume_increased'] &
-                    (dataframe['volume'] > 0) &  # Ensure volume is not 0
-                    # Add conditions based on peak and trough
-                    (dataframe['lower_low_1h']) &
-                    (dataframe['lower_high_1h']) &
-                    # Enough energy on primary and major timeframe
-                    (dataframe['chop_1h'] > 40) &
-                    (dataframe['chop_15m'] > 45) &
-                    # Laguerre RSI confirmation
-                    (qtpylib.crossed_below(dataframe['laguerre'], self.sell_laguerre_level.value))
-                ),
-                'enter_short'] = 1
+            # Calculate conditions with error handling
+            try:
+                # --- Debugging for entry condition error ---
+                ptf_chop_col = f'chop_{self.primary_timeframe}'
+                mtf_chop_col = f'chop_{self.major_timeframe}'
 
-        return dataframe
+                if ptf_chop_col not in df.columns or mtf_chop_col not in df.columns:
+                    logger.error(f"Chop columns missing! Primary: {ptf_chop_col in df.columns}, Major: {mtf_chop_col in df.columns}. All columns: {df.columns.to_list()}")
+                    df['enter_long'] = 0
+                    df['enter_short'] = 0
+                    return df
+
+                ptf_thresh_val = self.primary_chop_threshold.value
+                mtf_thresh_val = self.major_chop_threshold.value
+
+                # logger.debug(f"Primary chop ({ptf_chop_col}) dtype: {df[ptf_chop_col].dtype}, head: {df[ptf_chop_col].head(3).to_list()}, threshold: {ptf_thresh_val} (type: {type(ptf_thresh_val)})")
+                # logger.debug(f"Major chop ({mtf_chop_col}) dtype: {df[mtf_chop_col].dtype}, head: {df[mtf_chop_col].head(3).to_list()}, threshold: {mtf_thresh_val} (type: {type(mtf_thresh_val)})")
+
+                cond_ptf_chop = (df[ptf_chop_col] > ptf_thresh_val)
+                cond_mtf_chop = (df[mtf_chop_col] > mtf_thresh_val)
+
+                # logger.debug(f"cond_ptf_chop dtype: {cond_ptf_chop.dtype}, head: {cond_ptf_chop.head(3).to_list()}")
+                # logger.debug(f"cond_mtf_chop dtype: {cond_mtf_chop.dtype}, head: {cond_mtf_chop.head(3).to_list()}")
+
+                # Ensure shifted boolean columns are boolean and NaNs are handled
+                ha_bullish_s1 = df[f'ha_bullish_{self.major_timeframe}'].shift(1).astype(float).fillna(0.0).astype(bool)
+                ha_bullish_s2 = df[f'ha_bullish_{self.major_timeframe}'].shift(2).astype(float).fillna(0.0).astype(bool)
+                ha_bullish_s3 = df[f'ha_bullish_{self.major_timeframe}'].shift(3).astype(float).fillna(0.0).astype(bool)
+                # logger.debug(f"ha_bullish_{self.major_timeframe} shift(3) (ha_bullish_s3) dtype: {ha_bullish_s3.dtype}, head: {ha_bullish_s3.head(3).to_list()}")
+                # --- End Debugging ---
+
+                # Pre-calculate common conditions for better performance
+                df['strong_volume'] = df['volume'] > (df['volume_mean'] * 1.5)
+                df['bullish_candle'] = df['close'] > df['open']
+                df['bearish_candle'] = df['close'] < df['open']
+                df['above_ema20'] = df['close'] > df['ema20']
+
+                # LONG Entry Conditions
+                long_condition = (
+                    # signal: laguerre crosses above buy_laguerre_level
+                    (qtpylib.crossed_above(dataframe['laguerre'], self.buy_laguerre_level.value)) &
+                    # confirmation: strong volume
+                    df['strong_volume'] &
+                    df['above_ema20'] &
+                    # at least 2 of the last 3 major heikin ashi candles are bullish
+                    (ha_bullish_s1 | ha_bullish_s2) & ha_bullish_s3 &
+                    # enough energy (using pre-calculated conditions)
+                    cond_ptf_chop &
+                    cond_mtf_chop
+                )
+
+                # SHORT Entry Conditions
+                short_condition = (
+                    # at least 2 of the last 3 major heikin ashi candles are bearish
+                    # Ensure shifted boolean columns are boolean and NaNs are handled
+                    (df[f'ha_bearish_{self.major_timeframe}'].shift(1).astype(float).fillna(0.0).astype(bool) | \
+                     df[f'ha_bearish_{self.major_timeframe}'].shift(2).astype(float).fillna(0.0).astype(bool)) & \
+                    df[f'ha_bearish_{self.major_timeframe}'].shift(3).astype(float).fillna(0.0).astype(bool)
+                ) & (
+                    # signal: laguerre crosses below sell_laguerre_level
+                    (qtpylib.crossed_below(dataframe['laguerre'], self.sell_laguerre_level.value)) &
+                    # confirmation: strong volume
+                    df['strong_volume'] &
+                    ~df['above_ema20'] &
+                    # enough energy
+                    cond_ptf_chop &
+                    cond_mtf_chop
+                )
+
+                # Apply conditions with position sizing
+                df.loc[long_condition, 'enter_long'] = 1
+
+                if self.can_short:
+                    df.loc[short_condition, 'enter_short'] = 1
+
+                # Limit the number of signals to avoid over-trading
+                max_signals = len(df) // 30  # Max 1 signal per 30 candles
+
+                # For long signals
+                if sum(long_condition) > max_signals:
+                    long_signals = df[long_condition].index[-max_signals:]
+                    df['enter_long'] = 0
+                    df.loc[long_signals, 'enter_long'] = 1
+
+                # For short signals
+                if self.can_short and sum(short_condition) > max_signals:
+                    short_signals = df[short_condition].index[-max_signals:]
+                    df['enter_short'] = 0
+                    df.loc[short_signals, 'enter_short'] = 1
+
+                # Debug info
+                # logger.info(f"Generated {sum(df['enter_long'])} long and {sum(df['enter_short'])} short signals for {metadata['pair']}")
+
+                return df
+
+            except Exception as e:
+                logger.error(f"Error in entry conditions for {metadata['pair']}: {str(e)}\n{traceback.format_exc()}")
+                # Return dataframe with no signals if there's an error
+                df['enter_long'] = 0
+                df['enter_short'] = 0
+                return df
+
+        except Exception as e:
+            logger.error(f"Critical error in populate_entry_trend for {metadata['pair']}: {str(e)}\n{traceback.format_exc()}")
+            # Return the original dataframe with no signals if something goes wrong
+            dataframe['enter_long'] = 0
+            dataframe['enter_short'] = 0
+            return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Based on Dow Theory principles, identify exit signals when trends reverse
+        Generate exit signals based on trend reversals, profit targets, and stop losses
         """
-        # Default values
-        dataframe['exit_long'] = 0
-        dataframe['exit_short'] = 0
+        try:
+            # Create a copy to avoid SettingWithCopyWarning
+            df = dataframe.copy()
 
-        # Exit LONG positions
-        dataframe.loc[
-            (
-                # Reversal signals in primary trend
-                # (dataframe['downtrend_15m_15m']) |
-                # # Trend reversal on high volume
-                # (
-                #     dataframe['lower_high'] &
-                #     dataframe['lower_low'] &
-                #     dataframe['volume_increased']
-                # ) |
-                (dataframe['higher_high_15m'] == False) |
-                # Break below key support
-                (dataframe['close'] < dataframe['trough_15m'])
-                # Laguerre RSI exit condition
-                | (qtpylib.crossed_below(dataframe['laguerre'], self.exit_long_laguerre_level.value))
-            ),
-            'exit_long'] = 1
+            # Initialize exit columns
+            df['exit_long'] = 0
+            df['exit_short'] = 0
 
-        # Exit SHORT positions
-        if self.can_short:
-            dataframe.loc[
-                (
-                    # Reversal signals in primary trend
-                    # (dataframe['uptrend_15m_15m']) |
-                    # # Trend reversal on high volume
-                    # (
-                    #     dataframe['higher_high'] &
-                    #     dataframe['higher_low'] &
-                    #     dataframe['volume_increased']
-                    # ) |
-                    (dataframe['lower_low_15m'] == False) |
-                    # Break above key resistance
-                    (dataframe['close'] > dataframe['peak_15m'])
-                    # Laguerre RSI exit condition
-                    | (qtpylib.crossed_above(dataframe['laguerre'], self.exit_short_laguerre_level.value))
-                ),
-                'exit_short'] = 1
+            try:
+                hh_col = f'higher_high_{self.primary_timeframe}'
+                ll_col = f'lower_low_{self.primary_timeframe}'
+                trough_col = f'trough_{self.primary_timeframe}'
+                peak_col = f'peak_{self.primary_timeframe}'
 
-        return dataframe
+                if not all(col in df.columns for col in [hh_col, ll_col, trough_col, peak_col]):
+                    logger.error(f"Exit condition columns missing! HH: {hh_col in df.columns}, LL: {ll_col in df.columns}, Trough: {trough_col in df.columns}, Peak: {peak_col in df.columns}. All columns: {df.columns.to_list()}")
+                    return df # Return df with no exits
+
+                # Exit LONG positions
+                exit_long_condition = (
+                    (df['close'] < df[trough_col]) |  # Price below last trough
+                    (df[ll_col].astype(bool)) # Confirmed lower low in primary
+                )
+
+                # Exit SHORT positions
+                exit_short_condition = (
+                    (df['close'] > df[peak_col]) |  # Price above last peak
+                    (df[hh_col].astype(bool)) # Confirmed higher high in primary
+                )
+
+                # Apply exit conditions
+                df.loc[exit_long_condition, 'exit_long'] = 1
+
+                if self.can_short:
+                    df.loc[exit_short_condition, 'exit_short'] = 1
+
+                return df
+            except Exception as e_inner:
+                logger.error(f"Error in exit trend condition calculation for {metadata['pair']}: {str(e_inner)}\n{traceback.format_exc()}")
+                # df['exit_long'] = 0 and df['exit_short'] = 0 are already set
+                return df
+
+        except Exception as e:
+            logger.error(f"Critical error in populate_exit_trend for {metadata['pair']}: {str(e)}\n{traceback.format_exc()}")
+            # Return dataframe with no exits if there's an error
+            dataframe['exit_long'] = 0
+            dataframe['exit_short'] = 0
+            return dataframe
 
     def custom_stop_loss(self, pair: str, trade: Trade, current_time: datetime,
                          current_rate: float, current_profit: float, **kwargs) -> Optional[float]:
         """
-        Custom stop loss based on 15m timeframe's troughs for long trades
-        and peaks for short trades.
-        These levels are identified in the populate_informative_15m method.
-
-        Returns:
-            Optional[float]: Percentage value for stoploss relative to current_rate,
-                             or None to use the default stoploss.
+        Custom stop loss based on ATR and support/resistance levels
         """
-        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        if dataframe.empty:
+        try:
+            # Get the dataframe
+            dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+            if len(dataframe) < 1:
+                return None
+
+            # Get the last candle
+            last_candle = dataframe.iloc[-1].squeeze()
+
+            # For long positions
+            if not trade.is_short:
+                # Use ATR-based stop loss (2 * ATR)
+                atr_stop = last_candle['close'] - (2 * last_candle['atr'])
+
+                # Use the more conservative stop (higher for long)
+                stop_loss_price = max(
+                    atr_stop,
+                    last_candle.get(f'trough_{self.primary_timeframe}', 0) * 0.998 if f'trough_{self.primary_timeframe}' in last_candle and not pd.isna(last_candle[f'trough_{self.primary_timeframe}']) else atr_stop
+                )
+
+                # Ensure stop is not too tight (at least 0.01% below entry)
+                min_stop = trade.open_rate * 0.999
+                stop_loss_price = max(stop_loss_price, min_stop)
+
+            # For short positions
+            else:
+                # Use ATR-based stop loss (2 * ATR)
+                atr_stop = last_candle['close'] + (2 * last_candle['atr'])
+
+                # Use the more conservative stop (lower for short)
+                stop_loss_price = min(
+                    atr_stop,
+                    last_candle.get(f'peak_{self.primary_timeframe}', float('inf')) * 1.002 if f'peak_{self.primary_timeframe}' in last_candle and not pd.isna(last_candle[f'peak_{self.primary_timeframe}']) else atr_stop
+                )
+
+                # Ensure stop is not too tight (at least 0.1% above entry)
+                max_stop = trade.open_rate * 1.001
+                stop_loss_price = min(stop_loss_price, max_stop)
+
+            # Convert to percentage
+            if stop_loss_price > 0:
+                final_stoploss = stoploss_from_absolute(stop_loss_price, current_rate,
+                                            is_short=trade.is_short, leverage=trade.leverage)
+                logger.debug(f"Stoploss update: {stop_loss_price} ->({final_stoploss}%)")
+                return final_stoploss
             return None
 
-        last_candle = dataframe.iloc[-1].squeeze()
+        except Exception as e:
+            print(f"Error in custom_stop_loss: {str(e)}")
+            return None
 
-        stop_loss_price = None
+    def _get_collateral_per_trade_slot(self, total_equity: float) -> float:
+        """
+        Calculate collateral per trade slot
+        based on total equity and available trade slots.
+        Returns 0.0 if no slots are available or total_equity is 0.
+        """
+        if total_equity <= 1e-7:  # Effectively zero
+            return 0.0
 
-        if not trade.is_short:  # Long trade
-            # Stop loss based on the last known trough from the 15m timeframe
-            if 'trough_15m' in last_candle and not pd.isna(last_candle['trough_15m']):
-                stop_loss_price = last_candle['trough_15m'] * 0.998
-        else:  # Short trade
-            # Stop loss based on the last known peak from the 15m timeframe
-            if 'peak_15m' in last_candle and not pd.isna(last_candle['peak_15m']):
-                stop_loss_price = last_candle['peak_15m'] * 1.002
+        open_trades_count = len(Trade.get_trades_proxy(is_open=True))
+        # max_open_trades from strategy config
+        max_open_trades = self.config.get('max_open_trades', 1)
+        if not isinstance(max_open_trades, int) or max_open_trades <= 0:
+            logger.warning(f"Invalid max_open_trades value: {max_open_trades}. Defaulting to 1.")
+            max_open_trades = 1
 
-        if stop_loss_price is not None:
-            # Calculate the stoploss percentage from the absolute price
-            # Ensure is_short is correctly passed for short trades
-            return stoploss_from_absolute(stop_loss_price, current_rate,
-                                          is_short=trade.is_short, leverage=trade.leverage)
+        if open_trades_count >= max_open_trades:
+            return 0.0  # No slots available
 
-        # If stop_loss_price is not set, return None to use the default stoploss.
-        return None
+        available_slots = max_open_trades - open_trades_count
+        # This check should ideally not be needed if open_trades_count < max_open_trades
+        # but as a safeguard:
+        if available_slots <= 0:
+            return 0.0
 
+        collateral_per_slot = total_equity / available_slots
+        return collateral_per_slot
+
+    def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
+                        proposed_stake: float, min_stake: Optional[float], max_stake: float,
+                        leverage: float, entry_tag: Optional[str], side: str,
+                        **kwargs) -> float:
+
+        self._force_leverage_one_for_this_trade = False # Reset at the beginning
+        total_equity = self.wallets.get_total_stake_amount()
+        collateral_per_slot = self._get_collateral_per_trade_slot(total_equity)
+
+        # Your logic to determine ideal_stake, e.g., from proposed_stake or other calculations
+        ideal_stake = proposed_stake # Placeholder for your actual logic
+
+        actual_stake_to_use = ideal_stake
+
+        if collateral_per_slot > 0 and collateral_per_slot < ideal_stake:
+            # Condition met: available collateral per slot is less than what we'd ideally stake.
+            # So, we use this smaller collateral_per_slot as the stake.
+            actual_stake_to_use = collateral_per_slot
+            # And signal the leverage() method to use leverage 1.0 for this trade.
+            self._force_leverage_one_for_this_trade = True
+
+        # Ensure stake is within min/max limits
+        if min_stake is not None:
+            actual_stake_to_use = max(actual_stake_to_use, min_stake)
+        actual_stake_to_use = min(actual_stake_to_use, max_stake)
+
+        logger.debug('actual_stake_to_use: ' + str(actual_stake_to_use) + '')
+        return actual_stake_to_use
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
                  proposed_leverage: float, max_leverage: float, side: str,
                  **kwargs) -> float:
         """
-        Limit leverage to reasonable values when using margin/futures
+        Calculate leverage based on maximum risk per trade.
+        The goal is to size the position such that if the stop-loss (trough_15m or peak_15m)
+        is hit, the loss is no more than max_risk_per_trade of total equity.
+
+        - Sets the maximum risk as a modifiable constant (max_risk_per_trade).
+        - Risk in stake currency is (total_equity * max_risk_per_trade).
+        - Desired position size (base currency) = risk_amount / (current_rate - stop_loss_price).
+        - Calculated leverage = (desired_position_size * current_rate) / stake_for_this_trade.
+        - If calculated leverage > max_leverage, do not enter (return 0.0).
         """
-        # Conservative leverage for Dow Theory - trend following is already strong
-        return min(2.0, max_leverage)
+        # Check if custom_stake_amount decided to force leverage 1.0
+        # This flag would be set by custom_stake_amount if it's active and makes such a decision.
+        if hasattr(self, '_force_leverage_one_for_this_trade') and self._force_leverage_one_for_this_trade:
+            self._force_leverage_one_for_this_trade = False  # Reset flag for the next trade
+            return 1.0
+
+        # Get total equity in stake currency
+        total_equity = self.wallets.get_total_stake_amount()
+
+        if total_equity <= 1e-7: # Effectively zero equity
+            return 0.0 # Not enough equity to calculate leverage
+
+        # Calculate risk amount in stake currency
+        risk_amount_stake_curr = (total_equity * self.max_risk_per_trade.value)
+
+        analyzed_df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        if analyzed_df.empty:
+            logger.warning(f"Leverage: Empty dataframe for pair {pair}, cannot determine stop-loss.")
+            return 0.0 # Cannot determine stop loss, do not trade
+        last_candle = analyzed_df.iloc[-1].squeeze()
+
+        stop_loss_price = None
+        price_diff_to_stop = 0.0
+
+        if side == 'long':
+            raw_stop_price = last_candle.get(f'trough_{self.primary_timeframe}')  # From primary informative
+            if pd.isna(raw_stop_price):
+                logger.warning(f"Leverage: trough_{self.primary_timeframe} is NaN for {pair} on {current_time}.")
+                return 0.0  # Stop-loss level not found or NaN
+            stop_loss_price = raw_stop_price * 0.998
+            if current_rate <= stop_loss_price:
+                return 0.0  # Invalid stop-loss for long
+            price_diff_to_stop = current_rate - stop_loss_price
+        elif side == 'short':
+            raw_stop_price = last_candle.get(f'peak_{self.primary_timeframe}')  # From primary informative
+            if pd.isna(raw_stop_price):
+                logger.warning(f"Leverage: peak_{self.primary_timeframe} is NaN for {pair} on {current_time}.")
+                return 0.0  # Stop-loss level not found or NaN
+            stop_loss_price = raw_stop_price * 1.002
+            if current_rate >= stop_loss_price:
+                return 0.0  # Invalid stop-loss for short
+            price_diff_to_stop = stop_loss_price - current_rate
+        else:
+            logger.error(f"Leverage: Invalid side '{side}' received.")
+            return 0.0 # Should not happen
+
+        if price_diff_to_stop <= 1e-7: # Avoid division by zero or very small stop distance
+            return 0.0 # Stop too close, do not enter
+
+        # Desired position size in base currency
+        desired_position_size_base = risk_amount_stake_curr / price_diff_to_stop
+        # Desired position value in stake currency
+        desired_position_value_stake_curr = desired_position_size_base * current_rate
+
+        # Collateral Freqtrade would allocate for this trade slot by default.
+        collateral_for_this_trade_slot = self._get_collateral_per_trade_slot(total_equity)
+
+        if collateral_for_this_trade_slot <= 1e-7: # Effectively zero collateral per slot
+            return 0.0 # No collateral available per slot, do not trade
+
+        required_leverage = desired_position_value_stake_curr / collateral_for_this_trade_slot
+
+        if required_leverage <= 1e-7: # Effectively zero or negative desired leverage
+            return 0.0 # Do not trade
+
+        if required_leverage > max_leverage:
+            return 0.0  # Required leverage too high, do not enter
+        if required_leverage < 1.0:
+            final_leverage = 1.0  # Use at least 1x leverage if conditions allow a trade
+        else:
+            final_leverage = required_leverage
+
+        # Ensure leverage is capped by max_leverage
+        final_leverage = min(final_leverage, max_leverage)
+
+        return float(round(final_leverage, 4)) # Round to a sensible precision

@@ -1,5 +1,16 @@
 import os
 from pathlib import Path
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from freqtrade.configuration import Configuration
+from freqtrade.data.btanalysis import load_backtest_data, load_backtest_stats
+from freqtrade.data.history import load_pair_history
+from freqtrade.enums import CandleType
+from freqtrade.data.dataprovider import DataProvider
+from freqtrade.resolvers import StrategyResolver
+from freqtrade.exchange.binance import Binance
+from strategies.FractalStrategy import FractalStrategy
 
 
 # Change directory
@@ -20,8 +31,6 @@ except FileNotFoundError:
 
 print(Path.cwd())
 
-from freqtrade.configuration import Configuration
-
 # Customize these according to your needs.
 
 # Initialize empty configuration object
@@ -37,15 +46,18 @@ config["strategy"] = "FractalStrategy"
 data_location = config["datadir"]
 
 # start and end date
-start_date = "2025-05-31"
-end_date = "2025-05-31"
+start_date = "2025-06-12"
+end_date = "2025-06-13"
 base_currency = "USDT" # Assuming USDT as the common quote and stake currency
 stake_currency = "USDT"
 
-# pairs_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'SUI', 'TRX', 'LINK']
-pairs_symbols = ['BTC']
+pairs_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'SUI', 'TRX', 'LINK']
+# pairs_symbols = ['ETH', 'XRP', 'LINK']
 
-from freqtrade.data.btanalysis import load_backtest_data, load_backtest_stats
+# Initialize strategy and get timeframes
+strategy = FractalStrategy(config=config)
+primary_timeframe = strategy.primary_timeframe
+major_timeframe = strategy.major_timeframe
 
 # if backtest_dir points to a directory, it'll automatically load the last backtest file.
 backtest_dir = config["user_data_dir"] / "backtest_results"
@@ -58,11 +70,6 @@ all_trades = load_backtest_data(backtest_dir)
 
 
 
-# Load data using values set above
-from freqtrade.data.history import load_pair_history
-from freqtrade.enums import CandleType
-
-
 # candles = load_pair_history(
 #     datadir=data_location, # This will be used inside the loop per pair
 #     timeframe=config["timeframe"], # This will be used inside the loop per pair
@@ -73,10 +80,6 @@ from freqtrade.enums import CandleType
 
 
 # Load strategy and exchange once
-from freqtrade.data.dataprovider import DataProvider
-from freqtrade.resolvers import StrategyResolver
-from freqtrade.exchange.binance import Binance
-
 # print(config['exchange'])
 strategy_name = config["strategy"] # Use the strategy name from config
 
@@ -173,32 +176,36 @@ for pair_symbol in pairs_symbols:
     # Print filtered trades (trades_red) for the plot
     print(f"\nFiltered Trades for {pair} (trades_red for plot):")
     if not trades_red.empty:
-        print(trades_red[['open_date', 'pair', 'is_short', 'open_rate', 'close_rate',
-                          'profit_ratio', 'exit_reason', 'trade_duration']])
+        print(trades_red[['open_date', 'pair', 'is_short', 'open_rate', 'close_rate', 'profit_abs',
+                          'profit_ratio', 'exit_reason', 'stake_amount', 'amount', 'leverage']])
         # Print corresponding data points from data_red
         print("\nCorresponding Data Points for Trades:")
         for index, trade in trades_red.iterrows():
-            # trade_date = trade['open_date']
-            # # Find the closest data point in data_red
-            # closest_data_point = data_red.iloc[
-            #     data_red.index.get_loc(trade_date)
-            # ]
-            # print(f"Trade Date: {trade_date}, "
-            #       f"Open: {closest_data_point['open']:.8f}, "
-            #       f"Close: {closest_data_point['close']:.8f}, "
-            #       f"High: {closest_data_point['high']:.8f}, "
-            #       f"Low: {closest_data_point['low']:.8f}, "
-            #       f"Chop 15m: {closest_data_point.get('chop_15m', 'N/A'):.2f}, "
-            #       f"Chop 1h: {closest_data_point.get('chop_1h', 'N/A'):.2f}, "
-            #       f"Enter Long: {closest_data_point.get('enter_long', 'N/A')}, "
-            #       f"Enter Short: {closest_data_point.get('enter_short', 'N/A')}")
+            trade_date = trade['open_date']
+            # Find the closest data point in data_red
+            closest_data_point = data_red.iloc[
+                data_red.index.get_loc(trade_date)
+            ]
+            print(f"Trade Date: {trade_date}, "
+                  f"Open: {closest_data_point['open']:.8f}, "
+                  f"Close: {closest_data_point['close']:.8f}, "
+                  f"High: {closest_data_point['high']:.8f}, "
+                  f"Low: {closest_data_point['low']:.8f}, "
+                  f"Trough 15m: {closest_data_point.get('trough_15m', 'N/A'):.2f}, "
+                  f"Chop 15m: {closest_data_point.get('chop_15m', 'N/A'):.2f}, "
+                  f"Chop 1h: {closest_data_point.get('chop_1h', 'N/A'):.2f}, "
+                  f"Enter Long: {closest_data_point.get('enter_long', 'N/A')}, "
+                  f"Enter Short: {closest_data_point.get('enter_short', 'N/A')}")
             close_date = trade['close_date']
+            # if close_date is not in data_red, print the trade
+            if close_date not in data_red.index:
+                print(f"Close Date: {trade['close_date']} not in data_red")
+                continue
             # Find the closest data point in data_red
             closest_data_point = data_red.iloc[
                 data_red.index.get_loc(close_date)
             ]
-            print(f"Trade Date: {trade['open_date']}, "
-                  f"Close Date: {trade['close_date']}"
+            print(f"Close Date: {trade['close_date']}"
                   f"O: {closest_data_point['open']:.4f}, "
                   f"C: {closest_data_point['close']:.4f}, "
                   f"H: {closest_data_point['high']:.4f}, "
@@ -228,67 +235,94 @@ for pair_symbol in pairs_symbols:
     fig.add_trace(candles, 1, 1)
 
     # Add Major Peak line
-    if 'peak_1h' in data_red.columns:
+    major_peak_col = f'peak_{major_timeframe}'
+    if major_peak_col in data_red.columns:
         fig.add_trace(go.Scatter(
             x=data_red.date,
-            y=data_red['peak_1h'],
-            name='Peak',
+            y=data_red[major_peak_col],
+            name=f'Major Peak ({major_timeframe})',
             line=dict(color=px.colors.qualitative.Pastel[0], width=1)
         ), row=1, col=1)
 
     # Add Major Trough line
-    if 'trough_1h' in data_red.columns:
+    major_trough_col = f'trough_{major_timeframe}'
+    if major_trough_col in data_red.columns:
         fig.add_trace(go.Scatter(
             x=data_red.date,
-            y=data_red['trough_1h'],
-            name='Trough',
+            y=data_red[major_trough_col],
+            name=f'Major Trough ({major_timeframe})',
             line=dict(color=px.colors.qualitative.Pastel[1], width=1)
         ), row=1, col=1)
 
-    # Add Primary Peak line (from 15m timeframe)
-    if 'peak_15m' in data_red.columns:
+    # Initialize strategy to get timeframes
+    strategy = FractalStrategy(config=config)
+
+    # Define timeframes for easier reference
+    primary_timeframe = strategy.primary_timeframe
+    major_timeframe = strategy.major_timeframe
+
+    # Add Primary Peak line (from primary timeframe)
+    primary_peak_col = f'peak_{primary_timeframe}'
+    if primary_peak_col in data_red.columns:
         fig.add_trace(go.Scatter(
             x=data_red.date,
-            y=data_red['peak_15m'],
-            name='Primary Peak (15m)',
+            y=data_red[primary_peak_col],
+            name=f'Primary Peak ({primary_timeframe})',
             line=dict(color=px.colors.qualitative.Pastel[2], width=1)
         ), row=1, col=1)
 
-    # Add Primary Trough line (from 15m timeframe)
-    if 'trough_15m' in data_red.columns:
+    # Add Primary Trough line (from primary timeframe)
+    primary_trough_col = f'trough_{primary_timeframe}'
+    if primary_trough_col in data_red.columns:
         fig.add_trace(go.Scatter(
             x=data_red.date,
-            y=data_red['trough_15m'],
-            name='Primary Trough (15m)',
+            y=data_red[primary_trough_col],
+            name=f'Primary Trough ({primary_timeframe})',
             line=dict(color=px.colors.qualitative.Pastel[3], width=1)
         ), row=1, col=1)
 
-    # Add markers for higher_high_1h at peak_1h
-    # Add markers for higher_high_1h at peak_1h, only at the start of each hour
-    if 'higher_high_1h' in data_red.columns and 'peak_1h' in data_red.columns and not data_red.empty:
-        # Filter data to the first entry of each hour where higher_high_1h is True
-        hh_data = data_red[(data_red['higher_high_1h'] == True) & (data_red.index.minute == 0)]
+    # Add markers for higher_high at major timeframe peaks
+    # Only at the start of each hour for hourly timeframes
+    major_higher_high_col = f'higher_high_{major_timeframe}'
+    major_peak_col = f'peak_{major_timeframe}'
+    major_ha_close = f'ha_close_{major_timeframe}'
+    major_ha_open = f'ha_open_{major_timeframe}'
+
+    if (major_higher_high_col in data_red.columns and
+        major_peak_col in data_red.columns and
+        not data_red.empty):
+        # Filter data to the first entry of each hour where the heikin ashi is up
+        hh_data = data_red[(data_red[major_ha_close] > data_red[major_ha_open]) &
+                (data_red[major_ha_close].shift(1) >= data_red[major_ha_open].shift(1)) &
+                (data_red.index.minute == 0)]
         if not hh_data.empty:
             fig.add_trace(go.Scatter(
                 x=hh_data.date,
-                y=hh_data['peak_1h'],
+                y=hh_data[major_peak_col],
                 mode='markers',
-                name='Higher High (1h)',
+                name=f'Higher High ({major_timeframe})',
                 marker=dict(symbol='triangle-up', color=px.colors.qualitative.Pastel[4]),
                 hoverinfo='skip'
             ), row=1, col=1)
 
-    # Add markers for lower_low_1h at trough_1h
-    # Add markers for lower_low_1h at trough_1h, only at the start of each hour
-    if 'lower_low_1h' in data_red.columns and 'trough_1h' in data_red.columns and not data_red.empty:
-        # Filter data to the first entry of each hour where lower_low_1h is True
-        ll_data = data_red[(data_red['lower_low_1h'] == True) & (data_red.index.minute == 0)]
+    # Add markers for lower_low at major timeframe troughs
+    # Add markers for lower_low at major timeframe troughs, only at the start of each hour
+    major_lower_low_col = f'lower_low_{major_timeframe}'
+    major_trough_col = f'trough_{major_timeframe}'
+
+    if (major_lower_low_col in data_red.columns and
+        major_trough_col in data_red.columns and
+        not data_red.empty):
+        # Filter data to the first entry of each hour where the heikin ashi is down
+        ll_data = data_red[(data_red[major_ha_close] < data_red[major_ha_open]) &
+                (data_red[major_ha_close].shift(1) <= data_red[major_ha_open].shift(1)) &
+                (data_red.index.minute == 0)]
         if not ll_data.empty:
             fig.add_trace(go.Scatter(
                 x=ll_data.date,
-                y=ll_data['trough_1h'],
+                y=ll_data[major_trough_col],
                 mode='markers',
-                name='Lower Low (1h)',
+                name=f'Lower Low ({major_timeframe})',
                 marker=dict(symbol='triangle-down', color=px.colors.qualitative.Pastel[5]),
                 hoverinfo='skip'
             ), row=1, col=1)
@@ -320,21 +354,23 @@ for pair_symbol in pairs_symbols:
         marker_color='#5C6BC0',  # Blue for volume bars
     ), row=2, col=1)"""
 
-    # Add Choppiness Index for 15m
-    if 'chop_15m' in data_red.columns:
+    # Add Choppiness Index for primary timeframe
+    primary_chop_col = f'chop_{primary_timeframe}'
+    if primary_chop_col in data_red.columns:
         fig.add_trace(go.Scatter(
             x=data_red.date,
-            y=data_red['chop_15m'],
-            name='Chop 15m',
+            y=data_red[primary_chop_col],
+            name=f'Chop ({primary_timeframe})',
             line=dict(color='orange', width=1)
         ), row=3, col=1)
 
-    # Add Choppiness Index for 1h
-    if 'chop_1h' in data_red.columns:
+    # Add Choppiness Index for major timeframe
+    major_chop_col = f'chop_{major_timeframe}'
+    if major_chop_col in data_red.columns:
         fig.add_trace(go.Scatter(
             x=data_red.date,
-            y=data_red['chop_1h'],
-            name='Chop 1h',
+            y=data_red[major_chop_col],
+            name=f'Chop ({major_timeframe})',
             line=dict(color='purple', width=1)
         ), row=3, col=1)
 
@@ -427,5 +463,5 @@ for pair_symbol in pairs_symbols:
     print(f"Interactive chart for {pair} has been saved to {html_filename}")
 
     # Save a static PNG version
-    fig.write_image(png_filename)
-    print(f"Static chart for {pair} has been saved to {png_filename}")
+    # fig.write_image(png_filename)
+    # print(f"Static chart for {pair} has been saved to {png_filename}")
