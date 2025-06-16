@@ -113,14 +113,14 @@ class FractalStrategy(IStrategy):
     reversal_threshold = IntParameter(10, 30, default=15, space="sell")
 
     # Laguerre RSI parameters
-    laguerre_gamma = DecimalParameter(0.5, 0.9, default=0.7, decimals=1, space="buy", load=True, optimize=True)
+    laguerre_gamma = DecimalParameter(0.5, 0.9, default=0.72, decimals=1, space="buy", load=True, optimize=True)
     buy_laguerre_level = DecimalParameter(0.1, 0.4, default=0.2, decimals=1, space="buy", load=True, optimize=True)
     sell_laguerre_level = DecimalParameter(0.6, 0.9, default=0.8, decimals=1, space="sell", load=True, optimize=True) # For short entry, cross below this
     exit_long_laguerre_level = DecimalParameter(0.6, 0.9, default=0.8, decimals=1, space="sell", load=True, optimize=True)
 
     # Choppiness Index parameters
-    primary_chop_threshold = IntParameter(40, 60, default=45, space="buy")
-    major_chop_threshold = IntParameter(35, 55, default=40, space="buy")
+    primary_chop_threshold = IntParameter(40, 60, default=50, space="buy")
+    major_chop_threshold = IntParameter(35, 55, default=45, space="buy")
 
     # Custom trade size parameters
     max_risk_per_trade = DecimalParameter(0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=True)
@@ -158,7 +158,7 @@ class FractalStrategy(IStrategy):
 
         # Identify peaks: where donchian_upper equals the high from 3 periods ago
         dataframe['peak'] = np.where(
-            dataframe['donchian_upper'] == dataframe['high'].shift(3),
+            dataframe['donchian_upper'] == dataframe['high'].shift(2),
             dataframe['donchian_upper'],
             np.nan
         )
@@ -166,7 +166,7 @@ class FractalStrategy(IStrategy):
 
         # Identify troughs: where donchian_lower equals the low from 3 periods ago
         dataframe['trough'] = np.where(
-            dataframe['donchian_lower'] == dataframe['low'].shift(3),
+            dataframe['donchian_lower'] == dataframe['low'].shift(2),
             dataframe['donchian_lower'],
             np.nan
         )
@@ -176,8 +176,9 @@ class FractalStrategy(IStrategy):
         # Initialize temporary columns for trend direction
         # 0: flat, 1: rising, -1: falling
         dataframe['peak_trend_temp'] = 0
-        dataframe.loc[dataframe['high'] > dataframe['peak'].shift(1), 'peak_trend_temp'] = 1
-        dataframe.loc[dataframe['peak'] < dataframe['peak'].shift(1), 'peak_trend_temp'] = -1
+        dataframe.loc[dataframe['high'] > dataframe['peak'].shift(1) * 1.001, 'peak_trend_temp'] = 1
+        dataframe.loc[dataframe['peak'] > dataframe['peak'].shift(1) * 1.001, 'peak_trend_temp'] = 1
+        dataframe.loc[dataframe['peak'] < dataframe['peak'].shift(1) * 0.999, 'peak_trend_temp'] = -1
         # Replace 0s (flat periods) with NA, then forward-fill the last known trend
         dataframe['peak_trend_temp'] = dataframe['peak_trend_temp'].replace(0, pd.NA).ffill()
         # higher_high is True if the prevailing trend of donchian_upper is upwards (1)
@@ -186,8 +187,9 @@ class FractalStrategy(IStrategy):
         dataframe['lower_high'] = (dataframe['peak_trend_temp'] == -1).fillna(False).astype(bool)
 
         dataframe['trough_trend_temp'] = 0
-        dataframe.loc[dataframe['trough'] > dataframe['trough'].shift(1), 'trough_trend_temp'] = 1
-        dataframe.loc[dataframe['low'] < dataframe['trough'].shift(1), 'trough_trend_temp'] = -1
+        dataframe.loc[dataframe['trough'] > dataframe['trough'].shift(1) * 1.001, 'trough_trend_temp'] = 1
+        dataframe.loc[dataframe['low'] < dataframe['trough'].shift(1) * 0.999, 'trough_trend_temp'] = -1
+        dataframe.loc[dataframe['trough'] < dataframe['trough'].shift(1) * 0.999, 'trough_trend_temp'] = -1
         # 0: flat, 1: rising, -1: falling
         # Replace 0s (flat periods) with NA, then forward-fill the last known trend
         dataframe['trough_trend_temp'] = dataframe['trough_trend_temp'].replace(0, pd.NA).ffill()
@@ -364,6 +366,9 @@ class FractalStrategy(IStrategy):
                 df['bullish_candle'] = df['close'] > df['open']
                 df['bearish_candle'] = df['close'] < df['open']
                 df['above_ema20'] = df['close'] > df['ema20']
+                back_range = int(3 * self.ratio_primary_to_signal)
+                df['above_resistance'] = df['low'].rolling(window=back_range).min() >= df[f'trough_{self.primary_timeframe}']
+                df['below_support'] = df['high'].rolling(window=back_range).max() <= df[f'peak_{self.primary_timeframe}']
 
                 # LONG Entry Conditions
                 long_condition = (
@@ -372,6 +377,7 @@ class FractalStrategy(IStrategy):
                     # confirmation: strong volume
                     df['strong_volume'] &
                     df['above_ema20'] &
+                    df['above_resistance'] &
                     # at least 2 of the last 3 major heikin ashi candles are bullish
                     df[ha_upswing_col] &
                     # enough energy (using pre-calculated conditions)
@@ -386,6 +392,7 @@ class FractalStrategy(IStrategy):
                     # confirmation: strong volume
                     df['strong_volume'] &
                     ~df['above_ema20'] &
+                    df['below_support'] &
                     # at least 2 of the last 3 major heikin ashi candles are bearish
                     df[ha_downswing_col] &
                     # enough energy
@@ -444,6 +451,7 @@ class FractalStrategy(IStrategy):
             # Initialize exit columns
             df['exit_long'] = 0
             df['exit_short'] = 0
+            df['exit_reason'] = ''  # New column to store exit reason
 
             try:
                 hh_col = f'higher_high_{self.primary_timeframe}'
@@ -456,22 +464,26 @@ class FractalStrategy(IStrategy):
                     return df # Return df with no exits
 
                 # Exit LONG positions
-                exit_long_condition = (
-                    (df['close'] < df[trough_col]) |  # Price below last trough
-                    (df[ll_col].astype(bool)) # Confirmed lower low in primary
-                )
+                exit_long_price_condition = (df['close'] < df[trough_col])
+                exit_long_trend_condition = (df[ll_col].astype(bool))
+
+                exit_long_condition = exit_long_price_condition | exit_long_trend_condition
 
                 # Exit SHORT positions
-                exit_short_condition = (
-                    (df['close'] > df[peak_col]) |  # Price above last peak
-                    (df[hh_col].astype(bool)) # Confirmed higher high in primary
-                )
+                exit_short_price_condition = (df['close'] > df[peak_col])
+                exit_short_trend_condition = (df[hh_col].astype(bool))
 
-                # Apply exit conditions
+                exit_short_condition = exit_short_price_condition | exit_short_trend_condition
+
+                # Apply exit conditions and set exit reason
                 df.loc[exit_long_condition, 'exit_long'] = 1
+                df.loc[exit_long_price_condition, 'exit_reason'] = 'price'
+                df.loc[exit_long_trend_condition, 'exit_reason'] = 'trend'
 
                 if self.can_short:
                     df.loc[exit_short_condition, 'exit_short'] = 1
+                    df.loc[exit_short_price_condition, 'exit_reason'] = 'price'
+                    df.loc[exit_short_trend_condition, 'exit_reason'] = 'trend'
 
                 return df
             except Exception as e_inner:
@@ -484,6 +496,7 @@ class FractalStrategy(IStrategy):
             # Return dataframe with no exits if there's an error
             dataframe['exit_long'] = 0
             dataframe['exit_short'] = 0
+            dataframe['exit_reason'] = ''  # Ensure the column exists even if there's an error
             return dataframe
 
     def custom_stop_loss(self, pair: str, trade: Trade, current_time: datetime,

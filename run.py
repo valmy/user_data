@@ -47,14 +47,14 @@ data_location = config["datadir"]
 
 # Date range configuration
 from datetime import datetime, timedelta
-overall_start = "2025-04-01"
-overall_end = "2025-06-13"
+overall_start = "2025-04-11"
+overall_end = "2025-04-20"
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
 end_date_dt = datetime.strptime(overall_end, "%Y-%m-%d")
 
 while current_date < end_date_dt:
-    next_date = current_date + timedelta(days=3)
+    next_date = current_date + timedelta(days=2)
     if next_date > end_date_dt:
         next_date = end_date_dt
     date_ranges.append((
@@ -347,7 +347,7 @@ for start_date, end_date in date_ranges:
         print(f"\nFiltered Trades for {pair} (trades_red for plot):")
         if not trades_red.empty:
             print(trades_red[['open_date', 'pair', 'is_short', 'open_rate', 'close_rate', 'profit_abs',
-                            'profit_ratio', 'exit_reason', 'stake_amount', 'amount', 'leverage']])
+                            'profit_ratio', 'exit_reason', 'amount', 'leverage']])
         # Print corresponding data points from data_red
             print("\nCorresponding Data Points for Trades:")
         for index, trade in trades_red.iterrows():
@@ -381,7 +381,9 @@ for start_date, end_date in date_ranges:
                   f"H: {closest_data_point['high']:.4f}, "
                   f"L: {closest_data_point['low']:.4f}, "
                   f"peak: {closest_data_point.get('peak_15m', 'N/A'):.4f}, "
-                  f"trough: {closest_data_point.get('trough_15m', 'N/A'):.4f}")
+                  f"trough: {closest_data_point.get('trough_15m', 'N/A'):.4f}, "
+                  f"pll: {closest_data_point.get('lower_low_15m', 'N/A')}, "
+                  f"reason: {closest_data_point.get('exit_reason', '')} ")
 
         else:
             print(f"No trades found for {pair} in the specified date range for plotting.")
@@ -634,12 +636,12 @@ for start_date, end_date in date_ranges:
             nav_html = f'''
             <div style="padding: 10px; background: #1f1f1f; display: flex; justify-content: space-between; align-items: center;">
                 <div>
-                    {f'<a href="chart_5m_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=3)).strftime("%Y-%m-%d")}_{start_date}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
-                    if (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=3)) >= datetime.strptime(overall_start, "%Y-%m-%d")
+                    {f'<a href="chart_5m_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")}_{start_date}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
+                    if (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=2)) >= datetime.strptime(overall_start, "%Y-%m-%d")
                     else '<span style="color: #666; padding: 5px 10px;">← Start</span>'}
                     <span style="color: #888; margin: 0 15px;">{start_date} to {end_date}</span>
-                    {f'<a href="chart_5m_{pair_symbol}_{end_date}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=3)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
-                    if (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=3)) <= datetime.strptime(overall_end, "%Y-%m-%d")
+                    {f'<a href="chart_5m_{pair_symbol}_{end_date}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=2)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
+                    if (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=2)) <= datetime.strptime(overall_end, "%Y-%m-%d")
                     else '<span style="color: #666; padding: 5px 10px;">End →</span>'}
                 </div>
                 <select onchange="window.location.href=this.value.replace('ASSET',this.options[this.selectedIndex].text)"
