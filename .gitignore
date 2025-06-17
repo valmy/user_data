@@ -4,7 +4,9 @@ config-hype.json
 data/
 freqaimodels/
 hyperopts/
+hyperopt_results/
 logs/
 notebooks/
+hyperopt.lock
 *.html
 *.png

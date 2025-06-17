@@ -108,25 +108,21 @@ class FractalStrategy(IStrategy):
     startup_candle_count: int = max(50, 3 * ratio_major_to_signal)
 
     # Parameters for tuning
-    trend_strength = IntParameter(20, 50, default=25, space="buy")
-    volume_threshold = DecimalParameter(1.0, 3.0, default=1.5, space="buy")
-    reversal_threshold = IntParameter(10, 30, default=15, space="sell")
+    volume_threshold = DecimalParameter(1.0, 3.0, default=1.5, space="buy", optimize=False)
 
     # Laguerre RSI parameters
-    laguerre_gamma = DecimalParameter(0.5, 0.9, default=0.72, decimals=1, space="buy", load=True, optimize=True)
-    buy_laguerre_level = DecimalParameter(0.1, 0.4, default=0.2, decimals=1, space="buy", load=True, optimize=True)
-    sell_laguerre_level = DecimalParameter(0.6, 0.9, default=0.8, decimals=1, space="sell", load=True, optimize=True) # For short entry, cross below this
-    exit_long_laguerre_level = DecimalParameter(0.6, 0.9, default=0.8, decimals=1, space="sell", load=True, optimize=True)
+    laguerre_gamma = DecimalParameter(0.4, 0.8, default=0.73, decimals=1, space="buy", load=True, optimize=True)
+    buy_laguerre_level = DecimalParameter(0.1, 0.4, default=0.2, decimals=1, space="buy", load=True, optimize=False)
+    sell_laguerre_level = DecimalParameter(0.6, 0.9, default=0.8, decimals=1, space="sell", load=True, optimize=False) # For short entry, cross below this
 
     # Choppiness Index parameters
-    primary_chop_threshold = IntParameter(40, 60, default=50, space="buy")
-    major_chop_threshold = IntParameter(35, 55, default=45, space="buy")
+    primary_chop_threshold = IntParameter(40, 60, default=45, space="buy", optimize=False)
+    major_chop_threshold = IntParameter(35, 55, default=40, space="buy", optimize=False)
 
     # Custom trade size parameters
-    max_risk_per_trade = DecimalParameter(0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=True)
+    max_risk_per_trade = DecimalParameter(0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=False)
 
     _force_leverage_one_for_this_trade: bool = False
-    exit_short_laguerre_level = DecimalParameter(0.1, 0.4, default=0.2, decimals=1, space="buy", load=True, optimize=True)
 
     def informative_pairs(self):
         """
@@ -365,7 +361,7 @@ class FractalStrategy(IStrategy):
                 df['strong_volume'] = df['volume'] > (df['volume_mean'] * 1.5)
                 df['bullish_candle'] = df['close'] > df['open']
                 df['bearish_candle'] = df['close'] < df['open']
-                df['above_ema20'] = df['close'] > df['ema20']
+                # df['above_ema20'] = df['close'] > df['ema20']
                 back_range = int(3 * self.ratio_primary_to_signal)
                 df['above_resistance'] = df['low'].rolling(window=back_range).min() >= df[f'trough_{self.primary_timeframe}']
                 df['below_support'] = df['high'].rolling(window=back_range).max() <= df[f'peak_{self.primary_timeframe}']
@@ -376,7 +372,7 @@ class FractalStrategy(IStrategy):
                     (qtpylib.crossed_above(dataframe['laguerre'], self.buy_laguerre_level.value)) &
                     # confirmation: strong volume
                     df['strong_volume'] &
-                    df['above_ema20'] &
+                    # df['above_ema20'] &
                     df['above_resistance'] &
                     # at least 2 of the last 3 major heikin ashi candles are bullish
                     df[ha_upswing_col] &
@@ -391,7 +387,7 @@ class FractalStrategy(IStrategy):
                     (qtpylib.crossed_below(dataframe['laguerre'], self.sell_laguerre_level.value)) &
                     # confirmation: strong volume
                     df['strong_volume'] &
-                    ~df['above_ema20'] &
+                    # ~df['above_ema20'] &
                     df['below_support'] &
                     # at least 2 of the last 3 major heikin ashi candles are bearish
                     df[ha_downswing_col] &

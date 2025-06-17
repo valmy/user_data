@@ -47,8 +47,8 @@ data_location = config["datadir"]
 
 # Date range configuration
 from datetime import datetime, timedelta
-overall_start = "2025-04-11"
-overall_end = "2025-04-20"
+overall_start = "2025-05-01"
+overall_end = "2025-05-31"
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
 end_date_dt = datetime.strptime(overall_end, "%Y-%m-%d")
@@ -65,8 +65,8 @@ while current_date < end_date_dt:
 base_currency = "USDT" # Assuming USDT as the common quote and stake currency
 stake_currency = "USDT"
 
-pairs_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'SUI', 'TRX', 'LINK']
-# pairs_symbols = ['ETH', 'XRP', 'LINK']
+# pairs_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'SUI', 'TRX', 'LINK']
+pairs_symbols = ['ETH', 'BNB', 'SOL', 'TRX', 'LINK', 'SUI']
 
 # Initialize strategy and get timeframes
 strategy = FractalStrategy(config=config)
