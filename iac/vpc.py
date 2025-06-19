@@ -7,7 +7,7 @@ import config
 def create_vpc() -> alicloud.vpc.Network:
     """
     Create a VPC for the Freqtrade infrastructure.
-    
+
     Returns:
         alicloud.vpc.Network: The created VPC resource
     """
@@ -29,11 +29,11 @@ def create_vpc() -> alicloud.vpc.Network:
 def create_vswitch(vpc_id: pulumi.Input[str], zone_id: str) -> alicloud.vpc.Switch:
     """
     Create a VSwitch in the specified VPC and zone.
-    
+
     Args:
         vpc_id: The ID of the VPC where the VSwitch will be created
         zone_id: The zone ID where the VSwitch will be created
-        
+
     Returns:
         alicloud.vpc.Switch: The created VSwitch resource
     """
@@ -55,10 +55,10 @@ def create_vswitch(vpc_id: pulumi.Input[str], zone_id: str) -> alicloud.vpc.Swit
 def get_vpc_outputs(vpc: alicloud.vpc.Network, vswitch: Optional[alicloud.vpc.Switch] = None) -> Dict[str, Any]:
     """
     Get the VPC outputs for export.
-    
+
     Args:
         vpc: The VPC resource
-        
+
     Returns:
         Dict[str, pulumi.Output[str]]: Dictionary of VPC outputs
     """
@@ -67,7 +67,7 @@ def get_vpc_outputs(vpc: alicloud.vpc.Network, vswitch: Optional[alicloud.vpc.Sw
         "vpc_name": vpc.vpc_name,
         "cidr_block": vpc.cidr_block,
     }
-    
+
     if vswitch:
         outputs.update({
             "vswitch_id": vswitch.id,
@@ -75,7 +75,7 @@ def get_vpc_outputs(vpc: alicloud.vpc.Network, vswitch: Optional[alicloud.vpc.Sw
             "vswitch_cidr": vswitch.cidr_block,
             "zone_id": vswitch.zone_id
         })
-        
+
     return outputs
 
 
