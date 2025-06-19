@@ -1,0 +1,12 @@
+name: freqtrade
+description: Freqtrade bot on Alibaba Cloud
+runtime:
+  name: python
+  options:
+    toolchain: uv
+    virtualenv: .venv
+
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: alicloud-python

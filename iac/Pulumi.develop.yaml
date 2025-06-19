@@ -1,0 +1,6 @@
+config:
+  alicloud:region: ap-southeast-5
+  alicloud:accessKey:
+    secure: AAABAHdCd6XpwKzDQhsW111BmyQQ+bhOy9i04KYj8owtLX6Qxu50GpN3UVKuICRpSosnBDIOF+w=
+  alicloud:secretKey:
+    secure: AAABAGW/MW7YN4CI6o27r7An4Nf3T2diVZ7wdYYvg0YQJ7+OZ8czzq+WeOQjtf3B6EhZk+Q/TlsqX8HY1Ns=

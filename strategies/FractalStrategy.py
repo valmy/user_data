@@ -111,13 +111,13 @@ class FractalStrategy(IStrategy):
     volume_threshold = DecimalParameter(1.0, 3.0, default=1.5, space="buy", optimize=False)
 
     # Laguerre RSI parameters
-    laguerre_gamma = DecimalParameter(0.4, 0.8, default=0.73, decimals=1, space="buy", load=True, optimize=True)
+    laguerre_gamma = DecimalParameter(0.6, 0.8, default=0.73, decimals=2, space="buy", load=True, optimize=True)
     buy_laguerre_level = DecimalParameter(0.1, 0.4, default=0.2, decimals=1, space="buy", load=True, optimize=False)
     sell_laguerre_level = DecimalParameter(0.6, 0.9, default=0.8, decimals=1, space="sell", load=True, optimize=False) # For short entry, cross below this
 
     # Choppiness Index parameters
-    primary_chop_threshold = IntParameter(40, 60, default=45, space="buy", optimize=False)
-    major_chop_threshold = IntParameter(35, 55, default=40, space="buy", optimize=False)
+    primary_chop_threshold = IntParameter(35, 60, default=45, space="buy", optimize=True)
+    major_chop_threshold = IntParameter(35, 50, default=40, space="buy", optimize=True)
 
     # Custom trade size parameters
     max_risk_per_trade = DecimalParameter(0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=False)
