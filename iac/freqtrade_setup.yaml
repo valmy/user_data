@@ -1,0 +1,119 @@
+---
+- name: Set up Freqtrade application
+  hosts: freqtradebox
+  become: yes
+  become_user: freqtrade
+  gather_facts: no
+  vars:
+    freqtrade_repo: "https://github.com/freqtrade/freqtrade.git"
+    freqtrade_branch: "2025.5"  # or "stable" (check tags)
+    strategy_repo: "https://github.com/valmy/user_data.git"
+    strategy_dir: "/home/freqtrade/freqtrade/user_data"
+    config_local_path: "{{ playbook_dir }}/../config.json"  # Path to your local config file in user_data directory
+    venv_dir: "/home/freqtrade/.venv"
+    service_name: "freqtrade"
+
+  tasks:
+    - name: Clone Freqtrade repository
+      git:
+        repo: "{{ freqtrade_repo }}"
+        dest: "/home/freqtrade/freqtrade"
+        version: "{{ freqtrade_branch }}"
+        accept_hostkey: yes
+        update: no  # Don't update the repository if it already exists
+
+    - name: Check if user_data is already initialized
+      stat:
+        path: "{{ strategy_dir }}/run.py"
+      register: user_data_initialized
+
+    - name: Remove existing user_data directory if not initialized
+      file:
+        path: "{{ strategy_dir }}"
+        state: absent
+      when: not user_data_initialized.stat.exists
+
+    - name: Clone strategy repository
+      git:
+        repo: "{{ strategy_repo }}"
+        dest: "{{ strategy_dir }}"
+        accept_hostkey: yes
+
+    - name: Create Python virtual environment
+      command: "python3 -m venv {{ venv_dir }}"
+      args:
+        chdir: "/home/freqtrade/freqtrade"
+
+    - name: Check if TA-Lib is installed
+      stat:
+        path: /usr/local/lib/libta_lib.a
+      register: talib_installed
+
+    - name: Install TA-Lib if not present
+      command: "bash install_ta-lib.sh"
+      become: yes
+      when: not talib_installed.stat.exists
+      args:
+        chdir: "/home/freqtrade/freqtrade/build_helpers"
+        creates: "/usr/local/lib/libta_lib.a"  # Skip if this file exists
+
+    - name: Install dependencies from requirements.txt
+      pip:
+        requirements: "/home/freqtrade/freqtrade/requirements.txt"
+        virtualenv: "{{ venv_dir }}"
+        virtualenv_python: python3
+      args:
+        chdir: "/home/freqtrade/freqtrade"
+
+    - name: Install freqtrade in development mode
+      pip:
+        name: "."
+        editable: yes
+        virtualenv: "{{ venv_dir }}"
+        virtualenv_python: python3
+      args:
+        chdir: "/home/freqtrade/freqtrade"
+
+    - name: Copy local config file
+      copy:
+        src: "{{ config_local_path }}"
+        dest: "/home/freqtrade/freqtrade/user_data/config.json"
+        owner: freqtrade
+        group: freqtrade
+        mode: 0600
+
+    - name: Create systemd service for Freqtrade
+      become: yes
+      become_method: sudo
+      become_user: root
+      template:
+        src: freqtrade.service.j2
+        dest: "/etc/systemd/system/{{ service_name }}.service"
+        owner: root
+        group: root
+        mode: '0644'
+      register: systemd_service
+      notify: reload systemd
+
+  handlers:
+    - name: reload systemd
+      become: yes
+      systemd:
+        daemon_reload: yes
+        daemon_reload_timeout: 30
+      register: reload_result
+      until: reload_result is not failed
+      retries: 3
+      delay: 5
+      when: systemd_service is changed
+      ignore_errors: yes
+
+    - name: Ensure service is enabled and started
+      become: yes
+      systemd:
+        name: "{{ service_name }}"
+        state: started
+        enabled: yes
+        daemon_reload: no  # We already did this in the handler
+        timeout: 30
+      when: systemd_service is changed

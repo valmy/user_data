@@ -1,0 +1,32 @@
+[Unit]
+Description=FreqTrade Bot
+After=network.target
+Requires=network.target
+
+[Service]
+User=freqtrade
+Group=freqtrade
+WorkingDirectory=/home/freqtrade/freqtrade
+
+# Activate virtual environment and run
+ExecStart={{ venv_dir }}/bin/freqtrade trade --config user_data/config.json --strategy FractalStrategy
+
+# Process management
+Restart=always
+RestartSec=10
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/freqtrade/freqtrade/user_data/
+CapabilityBoundingSet=
+
+# Environment
+Environment="PYTHONPATH=/home/freqtrade/freqtrade"
+Environment="PATH={{ venv_dir }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target
