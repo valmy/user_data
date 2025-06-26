@@ -1,8 +1,6 @@
 ---
 - name: Set up Freqtrade application
   hosts: freqtradebox
-  become: yes
-  become_user: freqtrade
   gather_facts: no
   vars:
     freqtrade_repo: "https://github.com/freqtrade/freqtrade.git"
@@ -20,7 +18,13 @@
         dest: "/home/freqtrade/freqtrade"
         version: "{{ freqtrade_branch }}"
         accept_hostkey: yes
-        update: no  # Don't update the repository if it already exists
+        update: yes  # Enable automatic updates when running the playbook
+      register: freqtrade_repo_updated
+      notify:
+        - reload systemd
+        - restart freqtrade
+      tags:
+        - update
 
     - name: Check if user_data is already initialized
       stat:
@@ -38,6 +42,13 @@
         repo: "{{ strategy_repo }}"
         dest: "{{ strategy_dir }}"
         accept_hostkey: yes
+        update: yes  # Enable automatic updates when running the playbook
+      register: strategy_repo_updated
+      notify:
+        - reload systemd
+        - restart freqtrade
+      tags:
+        - update
 
     - name: Create Python virtual environment
       command: "python3 -m venv {{ venv_dir }}"
@@ -80,12 +91,13 @@
         dest: "/home/freqtrade/freqtrade/user_data/config.json"
         owner: freqtrade
         group: freqtrade
-        mode: 0600
+        mode: '0600'
+      notify: restart freqtrade
+      tags:
+        - config
 
     - name: Create systemd service for Freqtrade
       become: yes
-      become_method: sudo
-      become_user: root
       template:
         src: freqtrade.service.j2
         dest: "/etc/systemd/system/{{ service_name }}.service"
@@ -93,9 +105,20 @@
         group: root
         mode: '0644'
       register: systemd_service
-      notify: reload systemd
+      notify:
+        - reload systemd
+        - restart freqtrade
+      tags:
+        - config
 
   handlers:
+    - name: restart freqtrade
+      systemd:
+        name: "{{ service_name }}"
+        state: restarted
+        daemon_reload: yes
+      when: systemd_service is defined or freqtrade_repo_updated is changed or strategy_repo_updated is changed
+
     - name: reload systemd
       become: yes
       systemd:
@@ -105,7 +128,7 @@
       until: reload_result is not failed
       retries: 3
       delay: 5
-      when: systemd_service is changed
+      when: systemd_service is changed or freqtrade_repo_updated is changed or strategy_repo_updated is changed
       ignore_errors: yes
 
     - name: Ensure service is enabled and started

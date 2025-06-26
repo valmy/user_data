@@ -9,7 +9,7 @@ Group=freqtrade
 WorkingDirectory=/home/freqtrade/freqtrade
 
 # Activate virtual environment and run
-ExecStart={{ venv_dir }}/bin/freqtrade trade --config user_data/config.json --strategy FractalStrategy
+ExecStart={{ venv_dir }}/bin/freqtrade trade --config user_data/config.json --strategy FractalStrategy --logfile user_data/logs/freqtrade.log
 
 # Process management
 Restart=always

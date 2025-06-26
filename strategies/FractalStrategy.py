@@ -112,6 +112,7 @@ class FractalStrategy(IStrategy):
 
     # Laguerre RSI parameters
     laguerre_gamma = DecimalParameter(0.6, 0.8, default=0.73, decimals=2, space="buy", load=True, optimize=True)
+    small_candle_ratio = DecimalParameter(1.0, 5.0, default=3.0, decimals=1, space="buy", load=True, optimize=True)
     buy_laguerre_level = DecimalParameter(0.1, 0.4, default=0.2, decimals=1, space="buy", load=True, optimize=False)
     sell_laguerre_level = DecimalParameter(0.6, 0.9, default=0.8, decimals=1, space="sell", load=True, optimize=False) # For short entry, cross below this
 
@@ -366,6 +367,10 @@ class FractalStrategy(IStrategy):
                 df['above_resistance'] = df['low'].rolling(window=back_range).min() >= df[f'trough_{self.primary_timeframe}']
                 df['below_support'] = df['high'].rolling(window=back_range).max() <= df[f'peak_{self.primary_timeframe}']
 
+                # Small candle condition: candle range must be smaller than small_candle_ratio * ATR
+                df['candle_range'] = df['high'] - df['low']
+                df['small_candle'] = df['candle_range'] < (self.small_candle_ratio.value * df['atr'])
+
                 # LONG Entry Conditions
                 long_condition = (
                     # signal: laguerre crosses above buy_laguerre_level
@@ -374,6 +379,8 @@ class FractalStrategy(IStrategy):
                     df['strong_volume'] &
                     # df['above_ema20'] &
                     df['above_resistance'] &
+                    # small candle condition
+                    df['small_candle'] &
                     # at least 2 of the last 3 major heikin ashi candles are bullish
                     df[ha_upswing_col] &
                     # enough energy (using pre-calculated conditions)
@@ -389,6 +396,8 @@ class FractalStrategy(IStrategy):
                     df['strong_volume'] &
                     # ~df['above_ema20'] &
                     df['below_support'] &
+                    # small candle condition
+                    df['small_candle'] &
                     # at least 2 of the last 3 major heikin ashi candles are bearish
                     df[ha_downswing_col] &
                     # enough energy
