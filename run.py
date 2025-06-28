@@ -11,6 +11,7 @@ from freqtrade.data.dataprovider import DataProvider
 from freqtrade.resolvers import StrategyResolver
 from freqtrade.exchange.binance import Binance
 from strategies.FractalStrategy import FractalStrategy
+from datetime import datetime, timedelta, timezone
 
 # Change directory
 # Modify this cell to insure that the output shows the correct path.
@@ -45,9 +46,8 @@ config["strategy"] = "FractalStrategy"
 data_location = config["datadir"]
 
 # Date range configuration
-from datetime import datetime, timedelta
-overall_start = "2025-06-01"
-overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+overall_start = "2025-05-01"
+overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=timezone.utc).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
 end_date_dt = datetime.strptime(overall_end, "%Y-%m-%d")

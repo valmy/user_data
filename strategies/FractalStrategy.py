@@ -216,9 +216,9 @@ class FractalStrategy(IStrategy):
         dataframe['ha_high'] = heikinashi['high']
         dataframe['ha_low'] = heikinashi['low']
         dataframe['ha_bullish'] = (heikinashi['close'] > heikinashi['open']).astype(bool)
-        dataframe['ha_upswing'] = dataframe['ha_bullish'].rolling(3).sum() >= 2
+        dataframe['ha_upswing'] = dataframe['ha_bullish'].rolling(4).sum() >= 3
         dataframe['ha_bearish'] = (heikinashi['close'] < heikinashi['open']).astype(bool)
-        dataframe['ha_downswing'] = dataframe['ha_bearish'].rolling(3).sum() >= 2
+        dataframe['ha_downswing'] = dataframe['ha_bearish'].rolling(4).sum() >= 3
 
         # Donchian Channels (using 5-period window)
         # These are used for trend identification
