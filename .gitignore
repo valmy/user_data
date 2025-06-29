@@ -7,8 +7,10 @@ hyperopts/
 hyperopt_results/
 logs/
 notebooks/
+__pycache__/
 uv.lock
 hyperopt.lock
 *.html
 *.png
+*.sqlite
 .vscode/
