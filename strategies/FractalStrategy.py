@@ -125,6 +125,10 @@ class FractalStrategy(IStrategy):
 
     _force_leverage_one_for_this_trade: bool = False
 
+    def is_backtest_mode(self) -> bool:
+        """Check if the current run mode is backtest or hyperopt"""
+        return self.dp.runmode.value in ["backtest", "hyperopt"]
+
     def informative_pairs(self):
         """
         Define additional, informative pair/interval combinations to be cached from the exchange.
@@ -594,7 +598,7 @@ class FractalStrategy(IStrategy):
                         **kwargs) -> float:
 
         self._force_leverage_one_for_this_trade = False # Reset at the beginning
-        total_equity = self.wallets.get_total_stake_amount()
+        total_equity = self.wallets.get_total_stake_amount() if not self.is_backtest_mode() else 1000
         collateral_per_slot = self._get_collateral_per_trade_slot(total_equity)
 
         # Your logic to determine ideal_stake, e.g., from proposed_stake or other calculations
@@ -638,7 +642,7 @@ class FractalStrategy(IStrategy):
             return 1.0
 
         # Get total equity in stake currency
-        total_equity = self.wallets.get_total_stake_amount()
+        total_equity = self.wallets.get_total_stake_amount() if not self.is_backtest_mode() else 1000
 
         if total_equity <= 1e-7: # Effectively zero equity
             return 0.0 # Not enough equity to calculate leverage

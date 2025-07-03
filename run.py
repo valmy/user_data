@@ -35,7 +35,6 @@ print(Path.cwd())
 
 # Initialize empty configuration object
 # config = Configuration.from_files([])
-# Optionally (recommended), u                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  se existing configuration file
 config = Configuration.from_files(["user_data/config.json"])
 
 # Define some constants
@@ -65,7 +64,7 @@ base_currency = "USDT" # Assuming USDT as the common quote and stake currency
 stake_currency = "USDT"
 
 # pairs_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'SUI', 'TRX', 'LINK']
-pairs_symbols = ['ETH', 'BNB', 'SOL', 'TRX', 'SUI', 'BTC']
+pairs_symbols = ['ETH', 'BNB', 'SUI', 'BTC', 'TRX', 'SOL']
 
 # Initialize strategy and get timeframes
 strategy = FractalStrategy(config=config)
@@ -218,90 +217,6 @@ for start_date, end_date in date_ranges:
             print(f"Error processing {pair}: {str(e)}")
             continue
 
-            candles = load_pair_history(
-                datadir=data_location,
-                timeframe=config["timeframe"],
-                pair=pair,
-                data_format="feather",
-                candle_type=CandleType.FUTURES,
-            )
-
-            # Confirm success
-            if candles.empty:
-                print(f"No data found for {pair} from {data_location}. Skipping.")
-                continue
-            print(f"Loaded {len(candles)} rows of data for {pair} from {data_location}")
-
-            # Generate buy/sell signals using strategy
-            df = loaded_strategy.analyze_ticker(candles, {"pair": pair})
-            print(f"Generated {df['enter_long'].sum()} long entry signals for {pair}")
-            print(f"Generated {df['enter_short'].sum()} short entry signals for {pair}")
-            data = df.set_index("date", drop=False)
-
-            # Limit graph period to keep plotly quick and reactive
-            end_date_dt = datetime.strptime(end_date, "%Y-%m-%d")
-            end_date_plus_dt = end_date_dt + timedelta(days=1)
-            end_date_plus = end_date_plus_dt.strftime("%Y-%m-%d")
-
-            # Filter trades to the current pair and date range
-            if not all_trades.empty:
-                trades_red = all_trades.loc[all_trades["pair"] == pair]
-                trades_red = trades_red[(trades_red["open_date"] >= start_date) & (trades_red["open_date"] < end_date_plus)]
-            else:
-                trades_red = pd.DataFrame()
-
-            data_red = data[start_date:end_date]
-
-            # Print filtered trades (trades_red) for the plot
-            print(f"\nFiltered Trades for {pair} (trades_red for plot):")
-            if not trades_red.empty:
-                print(trades_red[['open_date', 'pair', 'is_short', 'open_rate', 'close_rate', 'profit_abs',
-                                'profit_ratio', 'exit_reason', 'stake_amount', 'amount', 'leverage']])
-                print("\nCorresponding Data Points for Trades:")
-                for index, trade in trades_red.iterrows():
-                    trade_date = trade['open_date']
-                    closest_data_point = data_red.iloc[data_red.index.get_loc(trade_date)]
-                    print(f"Trade Date: {trade_date}, "
-                        f"Open: {closest_data_point['open']:.8f}, "
-                        f"Close: {closest_data_point['close']:.8f}, "
-                        f"High: {closest_data_point['high']:.8f}, "
-                        f"Low: {closest_data_point['low']:.8f}")
-                    close_date = trade['close_date']
-                    if close_date in data_red.index:
-                        closest_data_point = data_red.iloc[data_red.index.get_loc(close_date)]
-                        print(f"Close Date: {trade['close_date']}"
-                            f"O: {closest_data_point['open']:.4f}, "
-                            f"C: {closest_data_point['close']:.4f}, "
-                            f"H: {closest_data_point['high']:.4f}, "
-                            f"L: {closest_data_point['low']:.4f}")
-                    else:
-                        print(f"Close Date: {trade['close_date']} not in data_red")
-            else:
-                print(f"No trades found for {pair} in the specified date range for plotting.")
-
-            # Create and save chart
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                              vertical_spacing=0.03,
-                              row_heights=[0.6, 0.2, 0.2])
-
-            # ... (rest of chart creation code remains the same) ...
-
-            # Save the interactive HTML chart
-            html_filename = f"{project_root}/user_data/chart_5m_{pair_symbol}_{start_date}_{end_date}.html"
-            fig.write_html(html_filename)
-
-            # Add navigation and asset selector
-            with open(html_filename, 'r+') as f:
-                content = f.read()
-                body_index = content.find('<body>') + 6
-                # ... (navigation HTML insertion code remains the same) ...
-                f.truncate()
-
-            print(f"Interactive chart for {pair} has been saved to {html_filename}")
-
-        except Exception as e:
-            print(f"Error processing {pair}: {str(e)}")
-            continue
         candles = load_pair_history(
             datadir=data_location,
             timeframe=config["timeframe"],
@@ -538,8 +453,13 @@ for start_date, end_date in date_ranges:
                 x=data_red.date,
                 y=data_red[major_chop_col],
                 name=f'Chop ({major_timeframe})',
-                line=dict(color='purple', width=1)
+                line=dict(color='yellow', width=1)
             ), row=3, col=1)
+
+        fig.add_hline(y=strategy.major_chop_threshold.value, line_dash="dash", row=3, col=1,
+                    annotation_text="Minimal Threshold",
+                    annotation_position="bottom right",
+                    line_color="rgba(200, 200, 200, 0.5)")
 
         # Update layout for a dark theme
         fig.update_layout(

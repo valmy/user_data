@@ -1,0 +1,80 @@
+---
+- name: Set up Freqtrade application
+  hosts: freqtradebox
+  gather_facts: no
+  vars:
+    strategy_repo: "https://github.com/valmy/user_data.git"
+    strategy_dir: "/home/freqtrade/freqtrade/user_data"
+    config_local_path: "{{ playbook_dir }}/../config-hyperliquid.json"  # Path to your local config file in user_data directory
+    venv_dir: "/home/freqtrade/.venv"
+    service_name: "freqtrade-hyperliquid"
+
+  tasks:
+    - name: Clone strategy repository
+      git:
+        repo: "{{ strategy_repo }}"
+        dest: "{{ strategy_dir }}"
+        accept_hostkey: yes
+        update: yes  # Enable automatic updates when running the playbook
+      register: strategy_repo_updated
+      notify:
+        - reload systemd
+        - restart freqtrade-hyperliquid
+      tags:
+        - update
+
+    - name: Copy local config file
+      copy:
+        src: "{{ config_local_path }}"
+        dest: "/home/freqtrade/freqtrade/user_data/config-hyperliquid.json"
+        owner: freqtrade
+        group: freqtrade
+        mode: '0600'
+      notify: restart freqtrade-hyperliquid
+      tags:
+        - config
+
+    - name: Create systemd service for Freqtrade
+      become: yes
+      template:
+        src: freqtrade-hyperliquid.service.j2
+        dest: "/etc/systemd/system/{{ service_name }}.service"
+        owner: root
+        group: root
+        mode: '0644'
+      register: systemd_service
+      notify:
+        - reload systemd
+        - restart freqtrade-hyperliquid
+      tags:
+        - config
+
+  handlers:
+    - name: restart freqtrade-hyperliquid
+      systemd:
+        name: "{{ service_name }}"
+        state: restarted
+        daemon_reload: yes
+      when: systemd_service is defined or strategy_repo_updated is changed
+
+    - name: reload systemd
+      become: yes
+      systemd:
+        daemon_reload: yes
+        daemon_reload_timeout: 30
+      register: reload_result
+      until: reload_result is not failed
+      retries: 3
+      delay: 5
+      when: systemd_service is changed or strategy_repo_updated is changed
+      ignore_errors: yes
+
+    - name: Ensure service is enabled and started
+      become: yes
+      systemd:
+        name: "{{ service_name }}"
+        state: started
+        enabled: yes
+        daemon_reload: no  # We already did this in the handler
+        timeout: 30
+      when: systemd_service is changed
