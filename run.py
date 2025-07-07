@@ -45,7 +45,7 @@ config["strategy"] = "FractalStrategy"
 data_location = config["datadir"]
 
 # Date range configuration
-overall_start = "2025-05-01"
+overall_start = "2025-06-01"
 overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=timezone.utc).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")

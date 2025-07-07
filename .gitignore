@@ -1,7 +1,7 @@
 backtest_results/
 config.json
 config-hyperliquid.json
-config_private.json
+config-private-nfi.json
 data/
 freqaimodels/
 hyperopts/

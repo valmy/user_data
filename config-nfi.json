@@ -10,8 +10,9 @@
   "strategy": "NostalgiaForInfinityX6",
   "add_config_files": [
     "./configs/trading_mode-futures.json",
-    "./configs/blacklist-binance.json",
+    "./configs/pairlist-volume-hyperliquid-usdc.json",
+    "./configs/blacklist-hyperliquid.json",
     "./configs/exampleconfig.json",
-    "config_private.json"
+    "config-private-nfi.json"
   ]
 }

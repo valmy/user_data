@@ -123,11 +123,22 @@ class FractalStrategy(IStrategy):
     # Custom trade size parameters
     max_risk_per_trade = DecimalParameter(0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=False)
 
+    test_compounding_mode: bool = False
+
     _force_leverage_one_for_this_trade: bool = False
 
     def is_backtest_mode(self) -> bool:
         """Check if the current run mode is backtest or hyperopt"""
         return self.dp.runmode.value in ["backtest", "hyperopt"]
+
+    def get_total_equity(self):
+        if self.is_backtest_mode() or self.test_compounding_mode:
+            # Get values from config, with defaults if not set
+            ratio = self.config.get('tradable_balance_ratio', 1.0)
+            wallet = self.config.get('dry_run_wallet', 1000)
+            return ratio * wallet
+        else:
+            return self.wallets.get_total_stake_amount()
 
     def informative_pairs(self):
         """
@@ -282,10 +293,6 @@ class FractalStrategy(IStrategy):
         """
         Adds indicators for secondary trends and generates buy/sell signals
         """
-        # Get informative dataframes
-        informative_primary = self.dp.get_pair_dataframe(pair=metadata['pair'], timeframe=self.primary_timeframe)
-        informative_major = self.dp.get_pair_dataframe(pair=metadata['pair'], timeframe=self.major_timeframe)
-
         # Secondary trend indicators
         dataframe['ema20'] = ta.EMA(dataframe, timeperiod=20)
         dataframe['ema50'] = ta.EMA(dataframe, timeperiod=50)
@@ -598,7 +605,7 @@ class FractalStrategy(IStrategy):
                         **kwargs) -> float:
 
         self._force_leverage_one_for_this_trade = False # Reset at the beginning
-        total_equity = self.wallets.get_total_stake_amount() if not self.is_backtest_mode() else 1000
+        total_equity = self.get_total_equity()
         collateral_per_slot = self._get_collateral_per_trade_slot(total_equity)
 
         # Your logic to determine ideal_stake, e.g., from proposed_stake or other calculations
@@ -642,7 +649,7 @@ class FractalStrategy(IStrategy):
             return 1.0
 
         # Get total equity in stake currency
-        total_equity = self.wallets.get_total_stake_amount() if not self.is_backtest_mode() else 1000
+        total_equity = self.get_total_equity()
 
         if total_equity <= 1e-7: # Effectively zero equity
             return 0.0 # Not enough equity to calculate leverage
