@@ -532,7 +532,7 @@ class FractalStrategy(IStrategy):
             # For long positions
             if not trade.is_short:
                 # Use ATR-based stop loss (2 * ATR)
-                atr_stop = last_candle['close'] - (2 * last_candle['atr'])
+                atr_stop = last_candle['low'] - (2 * last_candle['atr'])
 
                 # Use the more conservative stop (higher for long)
                 stop_loss_price = max(
@@ -547,7 +547,7 @@ class FractalStrategy(IStrategy):
             # For short positions
             else:
                 # Use ATR-based stop loss (2 * ATR)
-                atr_stop = last_candle['close'] + (2 * last_candle['atr'])
+                atr_stop = last_candle['high'] + (2 * last_candle['atr'])
 
                 # Use the more conservative stop (lower for short)
                 stop_loss_price = min(

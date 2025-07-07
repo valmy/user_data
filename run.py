@@ -45,21 +45,22 @@ config["strategy"] = "FractalStrategy"
 data_location = config["datadir"]
 
 # Date range configuration
-overall_start = "2025-06-01"
+date_range_days = 1  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
+overall_start = "2025-07-01"
 overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=timezone.utc).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
 end_date_dt = datetime.strptime(overall_end, "%Y-%m-%d")
 
 while current_date < end_date_dt:
-    next_date = current_date + timedelta(days=2)
+    next_date = current_date + timedelta(days=date_range_days)
     if next_date > end_date_dt:
         next_date = end_date_dt
     date_ranges.append((
         current_date.strftime("%Y-%m-%d"),
         next_date.strftime("%Y-%m-%d")
     ))
-    current_date = next_date
+    current_date = next_date + timedelta(days=1)  # Move to the day after next_date to avoid overlap
 base_currency = "USDT" # Assuming USDT as the common quote and stake currency
 stake_currency = "USDT"
 
@@ -191,12 +192,12 @@ for start_date, end_date in date_ranges:
                 nav_html = f'''
                 <div style="padding: 10px; background: #1f1f1f; display: flex; justify-content: space-between; align-items: center;">
                     <div>
-                        {f'<a href="chart_5m_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=3)).strftime("%Y-%m-%d")}_{start_date}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
-                        if (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=3)) >= datetime.strptime(overall_start, "%Y-%m-%d")
+                        {f'<a href="chart_5m_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
+                        if (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)) >= datetime.strptime(overall_start, "%Y-%m-%d")
                         else '<span style="color: #666; padding: 5px 10px;">← Start</span>'}
                         <span style="color: #888; margin: 0 15px;">{start_date} to {end_date}</span>
-                        {f'<a href="chart_5m_{pair_symbol}_{end_date}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=3)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
-                        if (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=3)) <= datetime.strptime(overall_end, "%Y-%m-%d")
+                        {f'<a href="chart_5m_{pair_symbol}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
+                        if (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)) <= datetime.strptime(overall_end, "%Y-%m-%d")
                         else '<span style="color: #666; padding: 5px 10px;">End →</span>'}
                     </div>
                     <select onchange="window.location.href=this.value.replace('ASSET',this.options[this.selectedIndex].text)"
@@ -374,7 +375,7 @@ for start_date, end_date in date_ranges:
         major_ha_downswing = f'ha_downswing_{major_timeframe}'
 
         if (major_ha_upswing in data_red.columns and
-            major_peak_col in data_red.columns and
+            'atr' in data_red.columns and
             not data_red.empty):
             # Filter data to the first entry of each hour where the heikin ashi is up
             hh_data = data_red[data_red[major_ha_upswing] &
@@ -382,7 +383,7 @@ for start_date, end_date in date_ranges:
             if not hh_data.empty:
                 fig.add_trace(go.Scatter(
                     x=hh_data.date,
-                    y=hh_data[major_peak_col],
+                    y=hh_data['low'] - 2 * hh_data['atr'],
                     mode='markers',
                     name=f'Up Swing ({major_timeframe})',
                     marker=dict(symbol='triangle-up', color=px.colors.qualitative.Pastel[4]),
@@ -394,7 +395,7 @@ for start_date, end_date in date_ranges:
         major_trough_col = f'trough_{major_timeframe}'
 
         if (major_ha_downswing in data_red.columns and
-            major_trough_col in data_red.columns and
+            'atr' in data_red.columns and
             not data_red.empty):
             # Filter data to the first entry of each hour where the heikin ashi is down
             ll_data = data_red[data_red[major_ha_downswing] &
@@ -402,7 +403,7 @@ for start_date, end_date in date_ranges:
             if not ll_data.empty:
                 fig.add_trace(go.Scatter(
                     x=ll_data.date,
-                    y=ll_data[major_trough_col],
+                    y=ll_data['high'] + 2 * ll_data['atr'],
                     mode='markers',
                     name=f'Down Swing ({major_timeframe})',
                     marker=dict(symbol='triangle-down', color=px.colors.qualitative.Pastel[5]),
@@ -555,12 +556,12 @@ for start_date, end_date in date_ranges:
             nav_html = f'''
             <div style="padding: 10px; background: #1f1f1f; display: flex; justify-content: space-between; align-items: center;">
                 <div>
-                    {f'<a href="chart_5m_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")}_{start_date}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
-                    if (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=2)) >= datetime.strptime(overall_start, "%Y-%m-%d")
+                    {f'<a href="chart_5m_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
+                    if (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)) >= datetime.strptime(overall_start, "%Y-%m-%d")
                     else '<span style="color: #666; padding: 5px 10px;">← Start</span>'}
                     <span style="color: #888; margin: 0 15px;">{start_date} to {end_date}</span>
-                    {f'<a href="chart_5m_{pair_symbol}_{end_date}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=2)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
-                    if (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=2)) <= datetime.strptime(overall_end, "%Y-%m-%d")
+                    {f'<a href="chart_5m_{pair_symbol}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
+                    if (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)) <= datetime.strptime(overall_end, "%Y-%m-%d")
                     else '<span style="color: #666; padding: 5px 10px;">End →</span>'}
                 </div>
                 <select onchange="window.location.href=this.value.replace('ASSET',this.options[this.selectedIndex].text)"
