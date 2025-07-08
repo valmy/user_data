@@ -53,6 +53,9 @@ class FractalStrategy(IStrategy):
     """
     INTERFACE_VERSION = 3
 
+    # Whether to use safe position adjustment
+    position_adjustment_enable = True
+
     # Signal timeframe for the strategy - using 15m as primary trend
     timeframe = "5m"  # Renamed from signal_timeframe
     primary_timeframe = "15m" # This can remain for your internal logic if needed
@@ -718,3 +721,96 @@ class FractalStrategy(IStrategy):
         final_leverage = min(final_leverage, max_leverage)
 
         return float(round(final_leverage, 4)) # Round to a sensible precision
+
+    def order_filled(self, pair: str, trade: Trade, order: Order, current_time: datetime, **kwargs) -> None:
+        """
+        Called right after an order fills.
+        Will be called for all order types (entry, exit, stoploss, position adjustment).
+        :param pair: Pair for trade
+        :param trade: trade object.
+        :param order: Order object.
+        :param current_time: datetime object, containing the current datetime
+        :param **kwargs: Ensure to keep this here so updates to this won't break your strategy.
+        """
+
+        # Exit if order type is not entry
+        if order.order_type != "entry":
+            return None
+
+        # Obtain pair dataframe (just to show how to access it)
+        dataframe, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
+        last_candle = dataframe.iloc[-1].squeeze()
+
+        stop_loss_price = None
+        price_diff_to_stop = 0.0
+
+        side = 'long' if not trade.is_short else 'short'
+
+        if side == 'long':
+            raw_stop_price = last_candle.get(f'trough_{self.primary_timeframe}')  # From primary informative
+            stop_loss_price = raw_stop_price * 0.998
+            price_diff_to_stop = trade.open_rate - stop_loss_price
+            take_profit_price = trade.open_rate + price_diff_to_stop
+        elif side == 'short':
+            raw_stop_price = last_candle.get(f'peak_{self.primary_timeframe}')  # From primary informative
+            stop_loss_price = raw_stop_price * 1.002
+            price_diff_to_stop = stop_loss_price - trade.open_rate
+            take_profit_price = trade.open_rate - price_diff_to_stop
+        else:
+            logger.error(f"Order Filled: Invalid side '{side}' received.")
+            return None # Should not happen
+
+        trade.set_custom_data(key='take_profit_price', value=take_profit_price)
+
+        return None
+
+
+    def adjust_trade_position(self, trade: Trade, current_time: datetime,
+                              current_rate: float, current_profit: float,
+                              min_stake: float | None, max_stake: float,
+                              current_entry_rate: float, current_exit_rate: float,
+                              current_entry_profit: float, current_exit_profit: float,
+                              **kwargs
+                              ) -> float | None | tuple[float | None, str | None]:
+        """
+        Adjust trade position based on take profit conditions.
+
+        When the price reaches the take profit level for the first time,
+        reduce the position by 50% to lock in some profits while letting
+        the remaining position continue to run.
+
+        This is only done once per trade to avoid multiple reductions.
+        """
+
+        if trade.has_open_orders:
+            # Only act if no orders are open
+            return
+
+        take_profit_price = trade.get_custom_data(key='take_profit_price')
+        take_profit_reduced = trade.get_custom_data(key='take_profit_reduced', default=False)
+
+        # Check if we've reached take profit price and haven't reduced position yet
+        # For long positions: current_rate >= take_profit_price
+        # For short positions: current_rate <= take_profit_price
+        take_profit_reached = False
+        if take_profit_price is not None and not take_profit_reduced:
+            if not trade.is_short:  # Long position
+                take_profit_reached = current_rate >= take_profit_price
+            else:  # Short position
+                take_profit_reached = current_rate <= take_profit_price
+
+        if take_profit_reached:
+            # Mark that we've reduced the position at take profit
+            trade.set_custom_data(key='take_profit_reduced', value=True)
+
+            side_text = "short" if trade.is_short else "long"
+            logger.info(f"Take profit reached for {trade.pair} ({side_text}) at {current_rate:.6f} "
+                       f"(target: {take_profit_price:.6f}). Reducing position by 50%.")
+
+            # Reduce position by half (return -0.5 to reduce by 50%)
+            # The negative value indicates we want to reduce the position
+            # This allows us to take some profit while letting the remaining position run
+            return -0.5
+
+        # If we've already reduced at take profit, let the remaining position run
+        return None
