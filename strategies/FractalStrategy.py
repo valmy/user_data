@@ -628,7 +628,7 @@ class FractalStrategy(IStrategy):
             actual_stake_to_use = max(actual_stake_to_use, min_stake)
         actual_stake_to_use = min(actual_stake_to_use, max_stake)
 
-        logger.debug('actual_stake_to_use: ' + str(actual_stake_to_use) + '')
+        logger.debug(f"Actual_stake_to_use ({pair}): {actual_stake_to_use}")
         return actual_stake_to_use
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
@@ -725,19 +725,15 @@ class FractalStrategy(IStrategy):
     def order_filled(self, pair: str, trade: Trade, order: Order, current_time: datetime, **kwargs) -> None:
         """
         Called right after an order fills.
-        Will be called for all order types (entry, exit, stoploss, position adjustment).
-        :param pair: Pair for trade
-        :param trade: trade object.
-        :param order: Order object.
-        :param current_time: datetime object, containing the current datetime
-        :param **kwargs: Ensure to keep this here so updates to this won't break your strategy.
         """
+        logger.info(f"Order filled callback triggered for {pair}: order_side={order.ft_order_side}, order_type={order.order_type}")
 
-        # Exit if order type is not entry
-        if order.order_type != "entry":
+        # Exit if order is not an entry order
+        if order.ft_order_side != trade.entry_side:
+            # logger.info(f"Skipping non-entry order: {order.ft_order_side}")
             return None
 
-        # Obtain pair dataframe (just to show how to access it)
+        # Obtain pair dataframe
         dataframe, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
@@ -760,6 +756,8 @@ class FractalStrategy(IStrategy):
             logger.error(f"Order Filled: Invalid side '{side}' received.")
             return None # Should not happen
 
+        # Log the take profit price being set
+        logger.info(f"Setting take_profit_price={take_profit_price} for {pair}")
         trade.set_custom_data(key='take_profit_price', value=take_profit_price)
 
         return None
