@@ -19,9 +19,9 @@
       "max_risk_per_trade": 0.02,
       "volume_threshold": 1.5,
       "laguerre_gamma": 0.68,
-      "major_chop_threshold": 40,
-      "primary_chop_threshold": 37,
-      "small_candle_ratio": 2.9
+      "major_chop_threshold": 41,
+      "primary_chop_threshold": 38,
+      "small_candle_ratio": 2.0
     },
     "sell": {
       "sell_laguerre_level": 0.8
@@ -29,5 +29,5 @@
     "protection": {}
   },
   "ft_stratparam_v": 1,
-  "export_time": "2025-07-03 16:34:05.309060+00:00"
+  "export_time": "2025-07-09 04:10:29.683739+00:00"
 }
