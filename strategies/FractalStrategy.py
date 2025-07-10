@@ -570,7 +570,18 @@ class FractalStrategy(IStrategy):
             if stop_loss_price > 0:
                 final_stoploss = stoploss_from_absolute(stop_loss_price, current_rate,
                                             is_short=trade.is_short, leverage=trade.leverage)
-                logger.info(f"Stoploss update for {pair} {trade.is_short}: price={stop_loss_price:.6f}, percent={final_stoploss:.4%}")
+
+                # Only log when there's an actual change in stop loss value
+                # Use a small epsilon for floating point comparison
+                epsilon = 1e-8  # Small value to account for floating point precision
+                current_stop_loss = trade.stop_loss if trade.stop_loss else 0
+
+                # Check if the difference is significant (greater than epsilon)
+                stop_loss_changed = abs(stop_loss_price - current_stop_loss) > epsilon
+
+                if stop_loss_changed:
+                    logger.info(f"Stoploss update for {pair} {trade.is_short}: price={stop_loss_price:.6f}, percent={final_stoploss:.4%}")
+
                 return final_stoploss
             return None
 
