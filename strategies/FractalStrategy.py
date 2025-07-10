@@ -518,12 +518,16 @@ class FractalStrategy(IStrategy):
             dataframe['exit_reason'] = ''  # Ensure the column exists even if there's an error
             return dataframe
 
-    def custom_stop_loss(self, pair: str, trade: Trade, current_time: datetime,
-                         current_rate: float, current_profit: float, **kwargs) -> Optional[float]:
+    def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
+                         current_rate: float, current_profit: float, after_fill: bool = False,
+                         **kwargs) -> Optional[float]:
         """
         Custom stop loss based on ATR and support/resistance levels
         """
         try:
+            # Enhanced logging
+            # print(f"Custom stoploss called for {pair}: profit={current_profit:.2%}, after_fill={after_fill}")
+
             # Get the dataframe
             dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
             if len(dataframe) < 1:
@@ -566,12 +570,12 @@ class FractalStrategy(IStrategy):
             if stop_loss_price > 0:
                 final_stoploss = stoploss_from_absolute(stop_loss_price, current_rate,
                                             is_short=trade.is_short, leverage=trade.leverage)
-                logger.debug(f"Stoploss update: {stop_loss_price} ->({final_stoploss}%)")
+                logger.info(f"Stoploss update for {pair} {trade.is_short}: price={stop_loss_price:.6f}, percent={final_stoploss:.4%}")
                 return final_stoploss
             return None
 
         except Exception as e:
-            print(f"Error in custom_stop_loss: {str(e)}")
+            logger.error(f"Error in custom_stop_loss: {str(e)}")
             return None
 
     def _get_collateral_per_trade_slot(self, total_equity: float) -> float:
