@@ -74,8 +74,8 @@ class FractalStrategy(IStrategy):
     stoploss = -0.20
 
     # Trailing stoploss to lock in profits as trend continues
-    trailing_stop = False
-    trailing_stop_positive = 0.10
+    trailing_stop = True
+    trailing_stop_positive = 0.20
     trailing_stop_positive_offset = 0.0
     trailing_only_offset_is_reached = False
 
@@ -86,7 +86,7 @@ class FractalStrategy(IStrategy):
     use_exit_signal = True
     exit_profit_only = False
     ignore_roi_if_entry_signal = False
-    use_custom_stoploss = True
+    use_custom_stoploss = False
 
     signal_timeframe_minutes = timeframe_to_minutes(timeframe)
     primary_timeframe_minutes = timeframe_to_minutes(primary_timeframe)
@@ -114,17 +114,18 @@ class FractalStrategy(IStrategy):
     volume_threshold = DecimalParameter(1.0, 3.0, default=1.5, space="buy", optimize=False)
 
     # Laguerre RSI parameters
-    laguerre_gamma = DecimalParameter(0.6, 0.8, default=0.73, decimals=2, space="buy", load=True, optimize=True)
-    small_candle_ratio = DecimalParameter(1.0, 5.0, default=3.0, decimals=1, space="buy", load=True, optimize=True)
+    laguerre_gamma = DecimalParameter(0.6, 0.8, default=0.68, decimals=2, space="buy", load=True, optimize=False)
+    small_candle_ratio = DecimalParameter(1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=True)
     buy_laguerre_level = DecimalParameter(0.1, 0.4, default=0.2, decimals=1, space="buy", load=True, optimize=False)
     sell_laguerre_level = DecimalParameter(0.6, 0.9, default=0.8, decimals=1, space="sell", load=True, optimize=False) # For short entry, cross below this
 
     # Choppiness Index parameters
-    primary_chop_threshold = IntParameter(35, 60, default=45, space="buy", optimize=True)
+    primary_chop_threshold = IntParameter(35, 60, default=40, space="buy", optimize=True)
     major_chop_threshold = IntParameter(35, 50, default=40, space="buy", optimize=True)
 
     # Custom trade size parameters
     max_risk_per_trade = DecimalParameter(0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=False)
+    trailing_stop_ratio = DecimalParameter(3.0, 20.0, default=2.0, decimals=1, space="sell", load=True, optimize=True)
 
     test_compounding_mode: bool = False
 
@@ -539,7 +540,7 @@ class FractalStrategy(IStrategy):
             # For long positions
             if not trade.is_short:
                 # Use ATR-based stop loss (2 * ATR)
-                atr_stop = last_candle['low'] - (2 * last_candle['atr'])
+                atr_stop = last_candle['low'] - (self.trailing_stop_ratio.value * last_candle['atr'])
 
                 # Use the more conservative stop (higher for long)
                 stop_loss_price = max(
@@ -554,7 +555,7 @@ class FractalStrategy(IStrategy):
             # For short positions
             else:
                 # Use ATR-based stop loss (2 * ATR)
-                atr_stop = last_candle['high'] + (2 * last_candle['atr'])
+                atr_stop = last_candle['high'] + (self.trailing_stop_ratio.value * last_candle['atr'])
 
                 # Use the more conservative stop (lower for short)
                 stop_loss_price = min(
@@ -580,7 +581,11 @@ class FractalStrategy(IStrategy):
                 stop_loss_changed = abs(stop_loss_price - current_stop_loss) > epsilon
 
                 if stop_loss_changed:
-                    logger.info(f"Stoploss update for {pair} {trade.is_short}: price={stop_loss_price:.6f}, percent={final_stoploss:.4%}")
+                    logger.info(
+                        f"Stoploss update for {pair} "
+                        f"({'short' if trade.is_short else 'long'}): "
+                        f"price={stop_loss_price:.6f}, percent={final_stoploss:.4%}"
+                    )
 
                 return final_stoploss
             return None
@@ -793,6 +798,9 @@ class FractalStrategy(IStrategy):
         the remaining position continue to run.
 
         This is only done once per trade to avoid multiple reductions.
+
+        IMPORTANT: The return value represents stake currency amount to reduce,
+        NOT a percentage. To reduce by 50%, we must return -0.5 * trade.stake_amount.
         """
 
         if trade.has_open_orders:
@@ -820,10 +828,23 @@ class FractalStrategy(IStrategy):
             logger.info(f"Take profit reached for {trade.pair} ({side_text}) at {current_rate:.6f} "
                        f"(target: {take_profit_price:.6f}). Reducing position by 50%.")
 
-            # Reduce position by half (return -0.5 to reduce by 50%)
-            # The negative value indicates we want to reduce the position
-            # This allows us to take some profit while letting the remaining position run
-            return -0.5
+            # Calculate the correct stake amount to reduce position by exactly 50%
+            # FreqTrade formula: amount_to_exit = abs(stake_amount) * trade.amount / trade.stake_amount
+            # To exit 50% of position: 0.5 * trade.amount = abs(stake_amount) * trade.amount / trade.stake_amount
+            # Solving: stake_amount = -0.5 * trade.stake_amount (negative for reduction)
+            reduction_stake_amount = -0.5 * trade.stake_amount
+
+            # Calculate expected amount to be exited for validation
+            expected_exit_amount = abs(reduction_stake_amount) * trade.amount / trade.stake_amount
+            expected_exit_percentage = (expected_exit_amount / trade.amount) * 100
+
+            logger.debug(f"Position reduction calculation for {trade.pair}:")
+            logger.debug(f"  Current position: {trade.amount:.8f} {trade.base_currency}")
+            logger.debug(f"  Current stake: {trade.stake_amount:.6f} {trade.stake_currency}")
+            logger.debug(f"  Reduction stake amount: {reduction_stake_amount:.6f}")
+            logger.debug(f"  Expected exit amount: {expected_exit_amount:.8f} ({expected_exit_percentage:.1f}%)")
+
+            return reduction_stake_amount
 
         # If we've already reduced at take profit, let the remaining position run
         return None
