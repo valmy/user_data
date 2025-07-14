@@ -913,17 +913,15 @@ class FractalStrategy(IStrategy):
 
             # Classify the range based on what changed
             range_type = None
-            if current_peak != next_peak and current_trough != next_trough:
-                # Both changed - determine dominant movement
-                peak_change_pct = abs(next_peak - current_peak) / current_peak if current_peak > 0 else 0
-                trough_change_pct = abs(next_trough - current_trough) / current_trough if current_trough > 0 else 0
-                if peak_change_pct > trough_change_pct:
-                    range_type = "peak_to_peak"
-                else:
-                    range_type = "trough_to_trough"
-            elif current_peak != next_peak:
+            peak_changed = abs(current_peak - next_peak) / current_peak > 0.001 if current_peak > 0 else False
+            trough_changed = abs(current_trough - next_trough) / current_trough > 0.001 if current_trough > 0 else False
+
+            if peak_changed and trough_changed:
+                # Both changed significantly - create mixed transition
+                range_type = "mixed_transition"
+            elif peak_changed:
                 range_type = "peak_to_peak"
-            elif current_trough != next_trough:
+            elif trough_changed:
                 range_type = "trough_to_trough"
             else:
                 continue  # No significant change
@@ -961,22 +959,42 @@ class FractalStrategy(IStrategy):
 
         # Create annotations from merged ranges
         for range_data in merged_ranges:
-            # Choose color based on range type - soft, semi-transparent colors for dark background
+            # Calculate y_start and y_end based on range type
             if range_data['type'] == "peak_to_peak":
+                # For peak transitions: band between the lower and higher peak values
+                y_start = min(range_data['start_peak'], range_data['end_peak'])
+                y_end = max(range_data['start_peak'], range_data['end_peak'])
                 color = "rgba(255, 182, 193, 0.3)"  # Light pink - for peak transitions
-                label = "Peak Transition"
-            else:  # trough_to_trough
+                label = f"Peak Transition ({y_start:.2f} - {y_end:.2f})"
+            elif range_data['type'] == "trough_to_trough":
+                # For trough transitions: band between the lower and higher trough values
+                y_start = min(range_data['start_trough'], range_data['end_trough'])
+                y_end = max(range_data['start_trough'], range_data['end_trough'])
                 color = "rgba(173, 216, 230, 0.3)"  # Light blue - for trough transitions
-                label = "Trough Transition"
+                label = f"Trough Transition ({y_start:.2f} - {y_end:.2f})"
+            elif range_data['type'] == "mixed_transition":
+                # For mixed transitions: band from minimum trough to maximum peak
+                y_start = min(range_data['start_trough'], range_data['end_trough'])
+                y_end = max(range_data['start_peak'], range_data['end_peak'])
+                color = "rgba(255, 255, 224, 0.3)"  # Light yellow - for mixed transitions
+                label = f"Mixed Transition ({y_start:.2f} - {y_end:.2f})"
+            else:
+                # Fallback for any unexpected range type
+                continue
 
-            annotations.append({
-                "type": "area",
-                "label": label,
-                "start": range_data['start'],
-                "end": range_data['end'],
-                # Omitting y_start and y_end will result in a vertical area spanning the whole height of the chart
-                "color": color,
-            })
+            # Only create annotation if there's a meaningful price difference
+            if y_end > y_start and (y_end - y_start) / y_start > 0.001:  # At least 0.1% difference
+                annotations.append({
+                    "type": "area",
+                    "label": label,
+                    "start": range_data['start'],
+                    "end": range_data['end'],
+                    "y_start": y_start,
+                    "y_end": y_end,
+                    "color": color,
+                })
+            else:
+                logger.debug(f"Skipping annotation with insufficient price range: {y_start:.6f} - {y_end:.6f}")
 
         logger.debug(f"Created {len(annotations)} peak-trough annotations for {pair}")
         return annotations
