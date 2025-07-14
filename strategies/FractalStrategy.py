@@ -959,25 +959,16 @@ class FractalStrategy(IStrategy):
 
         # Create annotations from merged ranges
         for range_data in merged_ranges:
-            # Calculate y_start and y_end based on range type
+            # Calculate y_start and y_end
+            y_start = min(range_data['start_trough'], range_data['end_trough'])
+            y_end = max(range_data['start_peak'], range_data['end_peak'])
             if range_data['type'] == "peak_to_peak":
-                # For peak transitions: band between the lower and higher peak values
-                y_start = min(range_data['start_peak'], range_data['end_peak'])
-                y_end = max(range_data['start_peak'], range_data['end_peak'])
                 color = "rgba(255, 182, 193, 0.3)"  # Light pink - for peak transitions
-                label = f"Peak Transition ({y_start:.2f} - {y_end:.2f})"
             elif range_data['type'] == "trough_to_trough":
-                # For trough transitions: band between the lower and higher trough values
-                y_start = min(range_data['start_trough'], range_data['end_trough'])
-                y_end = max(range_data['start_trough'], range_data['end_trough'])
                 color = "rgba(173, 216, 230, 0.3)"  # Light blue - for trough transitions
-                label = f"Trough Transition ({y_start:.2f} - {y_end:.2f})"
             elif range_data['type'] == "mixed_transition":
                 # For mixed transitions: band from minimum trough to maximum peak
-                y_start = min(range_data['start_trough'], range_data['end_trough'])
-                y_end = max(range_data['start_peak'], range_data['end_peak'])
                 color = "rgba(255, 255, 224, 0.3)"  # Light yellow - for mixed transitions
-                label = f"Mixed Transition ({y_start:.2f} - {y_end:.2f})"
             else:
                 # Fallback for any unexpected range type
                 continue
