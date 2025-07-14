@@ -977,7 +977,7 @@ class FractalStrategy(IStrategy):
             if y_end > y_start and (y_end - y_start) / y_start > 0.001:  # At least 0.1% difference
                 annotations.append({
                     "type": "area",
-                    "label": label,
+                    # "label": label,
                     "start": range_data['start'],
                     "end": range_data['end'],
                     "y_start": y_start,
