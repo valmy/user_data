@@ -12,6 +12,8 @@ WorkingDirectory=/home/freqtrade/freqtrade
 ExecStart={{ venv_dir }}/bin/freqtrade trade --config user_data/config.json --strategy FractalStrategy --logfile user_data/logs/freqtrade.log
 
 # Process management
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGINT
 Restart=always
 RestartSec=10
 StartLimitInterval=60

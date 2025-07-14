@@ -7,6 +7,7 @@ import pandas as pd
 from datetime import datetime, timedelta, timezone
 from pandas import DataFrame
 from typing import Dict, Optional, Union, Tuple
+from freqtrade.ft_types.plot_annotation_type import AnnotationType
 
 from freqtrade.strategy import (
     IStrategy,
@@ -127,7 +128,7 @@ class FractalStrategy(IStrategy):
     max_risk_per_trade = DecimalParameter(0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=False)
     trailing_stop_ratio = DecimalParameter(3.0, 20.0, default=2.0, decimals=1, space="sell", load=True, optimize=True)
 
-    test_compounding_mode: bool = False
+    test_compounding_mode: bool = True
 
     _force_leverage_one_for_this_trade: bool = False
 
@@ -136,12 +137,14 @@ class FractalStrategy(IStrategy):
         return self.dp.runmode.value in ["backtest", "hyperopt"]
 
     def get_total_equity(self):
-        if self.is_backtest_mode() or self.test_compounding_mode:
+        if self.is_backtest_mode() and not self.test_compounding_mode:
             # Get values from config, with defaults if not set
             ratio = self.config.get('tradable_balance_ratio', 1.0)
             wallet = self.config.get('dry_run_wallet', 1000)
+            logger.debug(f"get_total_equity: Using config values. Ratio: {ratio}, Wallet: {wallet}")
             return ratio * wallet
         else:
+            logger.debug(f"get_total_equity: Using live wallet balance: {self.wallets.get_total_stake_amount()}")
             return self.wallets.get_total_stake_amount()
 
     def informative_pairs(self):
@@ -620,6 +623,7 @@ class FractalStrategy(IStrategy):
             return 0.0
 
         collateral_per_slot = total_equity / available_slots
+        logger.debug(f"collateral per slot: {collateral_per_slot} {total_equity} {available_slots}")
         return collateral_per_slot
 
     def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
@@ -648,7 +652,7 @@ class FractalStrategy(IStrategy):
             actual_stake_to_use = max(actual_stake_to_use, min_stake)
         actual_stake_to_use = min(actual_stake_to_use, max_stake)
 
-        logger.debug(f"Actual_stake_to_use ({pair}): {actual_stake_to_use}")
+        logger.debug(f"Actual_stake_to_use ({pair}): {actual_stake_to_use} {collateral_per_slot} {ideal_stake}")
         return actual_stake_to_use
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
@@ -673,6 +677,7 @@ class FractalStrategy(IStrategy):
 
         # Get total equity in stake currency
         total_equity = self.get_total_equity()
+        logger.debug(f"Leverage: Calculating total equity for {pair}: {total_equity}")
 
         if total_equity <= 1e-7: # Effectively zero equity
             return 0.0 # Not enough equity to calculate leverage
@@ -848,3 +853,130 @@ class FractalStrategy(IStrategy):
 
         # If we've already reduced at take profit, let the remaining position run
         return None
+
+    def plot_annotations(
+        self, pair: str, start_date: datetime, end_date: datetime, dataframe: DataFrame, **kwargs
+    ) -> list[AnnotationType]:
+        """
+        Retrieve area annotations for a chart.
+        Creates area annotations between primary peaks and primary troughs to highlight
+        periods of significant price movements.
+
+        :param pair: Pair that's currently analyzed
+        :param start_date: Start date of the chart data being requested
+        :param end_date: End date of the chart data being requested
+        :param dataframe: DataFrame with the analyzed data for the chart
+        :param **kwargs: Ensure to keep this here so updates to this won't break your strategy.
+        :return: List of AnnotationType objects
+        """
+        annotations = []
+
+        # Check if we have the required columns
+        peak_col = f'peak_{self.primary_timeframe}'
+        trough_col = f'trough_{self.primary_timeframe}'
+
+        if peak_col not in dataframe.columns or trough_col not in dataframe.columns:
+            logger.warning(f"Peak/trough columns not found for {pair}. Available columns: {dataframe.columns.tolist()}")
+            return annotations
+
+        # Filter dataframe to the requested date range
+        df_filtered = dataframe[
+            (dataframe['date'] >= start_date) &
+            (dataframe['date'] <= end_date)
+        ].copy()
+
+        if df_filtered.empty:
+            return annotations
+
+        # Identify significant peak and trough changes
+        df_filtered['peak_change'] = df_filtered[peak_col] != df_filtered[peak_col].shift(1)
+        df_filtered['trough_change'] = df_filtered[trough_col] != df_filtered[trough_col].shift(1)
+        df_filtered['significant_change'] = df_filtered['peak_change'] | df_filtered['trough_change']
+
+        # Get transition points where peaks or troughs change
+        transition_points = df_filtered[df_filtered['significant_change']].copy()
+
+        if len(transition_points) < 2:
+            return annotations
+
+        # Create ranges between transition points
+        ranges = []
+        for i in range(len(transition_points) - 1):
+            current_point = transition_points.iloc[i]
+            next_point = transition_points.iloc[i + 1]
+
+            # Determine the relationship type for this range
+            current_peak = current_point[peak_col]
+            current_trough = current_point[trough_col]
+            next_peak = next_point[peak_col]
+            next_trough = next_point[trough_col]
+
+            # Classify the range based on what changed
+            range_type = None
+            if current_peak != next_peak and current_trough != next_trough:
+                # Both changed - determine dominant movement
+                peak_change_pct = abs(next_peak - current_peak) / current_peak if current_peak > 0 else 0
+                trough_change_pct = abs(next_trough - current_trough) / current_trough if current_trough > 0 else 0
+                if peak_change_pct > trough_change_pct:
+                    range_type = "peak_to_peak"
+                else:
+                    range_type = "trough_to_trough"
+            elif current_peak != next_peak:
+                range_type = "peak_to_peak"
+            elif current_trough != next_trough:
+                range_type = "trough_to_trough"
+            else:
+                continue  # No significant change
+
+            ranges.append({
+                'start': current_point['date'],
+                'end': next_point['date'],
+                'type': range_type,
+                'start_peak': current_peak,
+                'start_trough': current_trough,
+                'end_peak': next_peak,
+                'end_trough': next_trough
+            })
+
+        # Merge adjacent ranges of the same type to reduce annotation count
+        merged_ranges = []
+        if ranges:
+            current_range = ranges[0]
+
+            for next_range in ranges[1:]:
+                # Check if ranges are adjacent and of the same type
+                if (current_range['type'] == next_range['type'] and
+                    current_range['end'] == next_range['start']):
+                    # Merge ranges
+                    current_range['end'] = next_range['end']
+                    current_range['end_peak'] = next_range['end_peak']
+                    current_range['end_trough'] = next_range['end_trough']
+                else:
+                    # Add current range and start new one
+                    merged_ranges.append(current_range)
+                    current_range = next_range
+
+            # Add the last range
+            merged_ranges.append(current_range)
+
+        # Create annotations from merged ranges
+        for range_data in merged_ranges:
+            # Choose color based on range type - soft, semi-transparent colors for dark background
+            if range_data['type'] == "peak_to_peak":
+                color = "rgba(255, 182, 193, 0.3)"  # Light pink - for peak transitions
+                label = "Peak Transition"
+            else:  # trough_to_trough
+                color = "rgba(173, 216, 230, 0.3)"  # Light blue - for trough transitions
+                label = "Trough Transition"
+
+            annotations.append({
+                "type": "area",
+                "label": label,
+                "start": range_data['start'],
+                "end": range_data['end'],
+                # Omitting y_start and y_end will result in a vertical area spanning the whole height of the chart
+                "color": color,
+            })
+
+        logger.debug(f"Created {len(annotations)} peak-trough annotations for {pair}")
+        return annotations

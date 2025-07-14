@@ -46,7 +46,7 @@ data_location = config["datadir"]
 
 # Date range configuration
 date_range_days = 1  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
-overall_start = "2025-07-01"
+overall_start = "2025-06-01"
 overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=timezone.utc).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
@@ -65,7 +65,7 @@ base_currency = "USDT" # Assuming USDT as the common quote and stake currency
 stake_currency = "USDT"
 
 # pairs_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'SUI', 'TRX', 'LINK']
-pairs_symbols = ['ETH', 'BNB', 'SUI', 'BTC', 'TRX', 'SOL']
+pairs_symbols = ['ETH', 'BNB', 'SUI', 'BTC', 'TRX', 'SOL', 'DOGE']
 
 # Initialize strategy and get timeframes
 strategy = FractalStrategy(config=config)
@@ -100,38 +100,6 @@ loaded_strategy = StrategyResolver.load_strategy(config)
 exchange = Binance(config) # Assuming Binance, adjust if necessary
 loaded_strategy.dp = DataProvider(config, exchange, None)
 loaded_strategy.ft_bot_start()
-
-
-# All statistics are available per strategy, so if `--strategy-list` was used during backtest,
-# this will be reflected here as well.
-# Example usages:
-print(stats["strategy"][strategy_name]["results_per_pair"])
-# Get pairlist used for this backtest
-print(stats["strategy"][strategy_name]["pairlist"])
-# Get market change (average change of all pairs from start to end of the backtest period)
-print(stats["strategy"][strategy_name]["market_change"])
-# Maximum drawdown ()
-print(stats["strategy"][strategy_name]["max_drawdown_abs"])
-# Maximum drawdown start and end
-print(stats["strategy"][strategy_name]["drawdown_start"])
-print(stats["strategy"][strategy_name]["drawdown_end"])
-
-
-# Get strategy comparison (only relevant if multiple strategies were compared)
-print(stats["strategy_comparison"])
-
-# Print all trades with date, pair, and profit details
-print("\nAll Trades (from backtest results):")
-if not all_trades.empty:
-    print(all_trades[['open_date', 'pair', 'profit_ratio', 'profit_abs', 'exit_reason', 'trade_duration']])
-else:
-    print("No trades found in the backtest results.")
-
-# Show value-counts per pair
-if not all_trades.empty:
-    print(all_trades.groupby("pair")["exit_reason"].value_counts())
-else:
-    print("No trades to group by.")
 
 from freqtrade.plot.plotting import generate_candlestick_graph
 import plotly.graph_objects as go
@@ -581,3 +549,34 @@ for start_date, end_date in date_ranges:
         # Save a static PNG version
         # fig.write_image(png_filename)
         # print(f"Static chart for {pair} has been saved to {png_filename}")
+
+# All statistics are available per strategy, so if `--strategy-list` was used during backtest,
+# this will be reflected here as well.
+# Example usages:
+print(stats["strategy"][strategy_name]["results_per_pair"])
+# Get pairlist used for this backtest
+print(stats["strategy"][strategy_name]["pairlist"])
+# Get market change (average change of all pairs from start to end of the backtest period)
+print(stats["strategy"][strategy_name]["market_change"])
+# Maximum drawdown ()
+print(stats["strategy"][strategy_name]["max_drawdown_abs"])
+# Maximum drawdown start and end
+print(stats["strategy"][strategy_name]["drawdown_start"])
+print(stats["strategy"][strategy_name]["drawdown_end"])
+
+
+# Get strategy comparison (only relevant if multiple strategies were compared)
+print(stats["strategy_comparison"])
+
+# Print all trades with date, pair, and profit details
+print("\nAll Trades (from backtest results):")
+if not all_trades.empty:
+    print(all_trades[['open_date', 'pair', 'profit_ratio', 'profit_abs', 'exit_reason', 'trade_duration']])
+else:
+    print("No trades found in the backtest results.")
+
+# Show value-counts per pair
+if not all_trades.empty:
+    print(all_trades.groupby("pair")["exit_reason"].value_counts())
+else:
+    print("No trades to group by.")
