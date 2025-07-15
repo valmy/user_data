@@ -893,6 +893,10 @@ class FractalStrategy(IStrategy):
         df_filtered['trough_change'] = df_filtered[trough_col] != df_filtered[trough_col].shift(1)
         df_filtered['significant_change'] = df_filtered['peak_change'] | df_filtered['trough_change']
 
+        # Always include start_date and end_date as transition points
+        df_filtered.loc[df_filtered.index[0], 'significant_change'] = True   # First row (start_date)
+        df_filtered.loc[df_filtered.index[-1], 'significant_change'] = True  # Last row (end_date)
+
         # Get transition points where peaks or troughs change
         transition_points = df_filtered[df_filtered['significant_change']].copy()
 
@@ -911,20 +915,36 @@ class FractalStrategy(IStrategy):
             next_peak = next_point[peak_col]
             next_trough = next_point[trough_col]
 
-            # Classify the range based on what changed
+            # Classify the range based on directional movement
             range_type = None
-            peak_changed = abs(current_peak - next_peak) / current_peak > 0.001 if current_peak > 0 else False
-            trough_changed = abs(current_trough - next_trough) / current_trough > 0.001 if current_trough > 0 else False
 
-            if peak_changed and trough_changed:
-                # Both changed significantly - create mixed transition
-                range_type = "mixed_transition"
-            elif peak_changed:
-                range_type = "peak_to_peak"
-            elif trough_changed:
-                range_type = "trough_to_trough"
+            # Calculate percentage changes for peaks and troughs
+            peak_change_pct = (next_peak - current_peak) / current_peak if current_peak > 0 else 0
+            trough_change_pct = (next_trough - current_trough) / current_trough if current_trough > 0 else 0
+
+            # Determine if changes are significant (> 0.1%)
+            peak_changed_significantly = abs(peak_change_pct) > 0.001
+            trough_changed_significantly = abs(trough_change_pct) > 0.001
+
+            # Determine directional bias
+            peak_rising = peak_change_pct > 0.001
+            peak_falling = peak_change_pct < -0.001
+            trough_rising = trough_change_pct > 0.001
+            trough_falling = trough_change_pct < -0.001
+
+            # Classify based on overall market structure direction
+            if (peak_rising and trough_rising) or (peak_rising and not trough_changed_significantly) or (trough_rising and not peak_changed_significantly):
+                # Both rising OR one rising with other stable = bullish structure
+                range_type = "bullish"
+            elif (peak_falling and trough_falling) or (peak_falling and not trough_changed_significantly) or (trough_falling and not peak_changed_significantly):
+                # Both falling OR one falling with other stable = bearish structure
+                range_type = "bearish"
+            elif (peak_rising and trough_falling) or (peak_falling and trough_rising):
+                # Peaks and troughs moving in opposite directions = neutral/consolidation
+                range_type = "neutral"
             else:
-                continue  # No significant change
+                # Fallback for edge cases
+                range_type = "neutral"
 
             ranges.append({
                 'start': current_point['date'],
@@ -936,39 +956,19 @@ class FractalStrategy(IStrategy):
                 'end_trough': next_trough
             })
 
-        # Merge adjacent ranges of the same type to reduce annotation count
-        merged_ranges = []
-        if ranges:
-            current_range = ranges[0]
-
-            for next_range in ranges[1:]:
-                # Check if ranges are adjacent and of the same type
-                if (current_range['type'] == next_range['type'] and
-                    current_range['end'] == next_range['start']):
-                    # Merge ranges
-                    current_range['end'] = next_range['end']
-                    current_range['end_peak'] = next_range['end_peak']
-                    current_range['end_trough'] = next_range['end_trough']
-                else:
-                    # Add current range and start new one
-                    merged_ranges.append(current_range)
-                    current_range = next_range
-
-            # Add the last range
-            merged_ranges.append(current_range)
-
         # Create annotations from merged ranges
-        for range_data in merged_ranges:
+        for range_data in ranges:
             # Calculate y_start and y_end
             y_start = min(range_data['start_trough'], range_data['end_trough'])
             y_end = max(range_data['start_peak'], range_data['end_peak'])
-            if range_data['type'] == "peak_to_peak":
-                color = "rgba(255, 182, 193, 0.3)"  # Light pink - for peak transitions
-            elif range_data['type'] == "trough_to_trough":
-                color = "rgba(173, 216, 230, 0.3)"  # Light blue - for trough transitions
-            elif range_data['type'] == "mixed_transition":
-                # For mixed transitions: band from minimum trough to maximum peak
-                color = "rgba(255, 255, 224, 0.3)"  # Light yellow - for mixed transitions
+
+            # Set colors based on market structure bias
+            if range_data['type'] == "bullish":
+                color = "rgba(144, 238, 144, 0.3)"  # Light green - for bullish structure
+            elif range_data['type'] == "bearish":
+                color = "rgba(255, 182, 193, 0.3)"  # Light pink/red - for bearish structure
+            elif range_data['type'] == "neutral":
+                color = "rgba(255, 255, 224, 0.3)"  # Light yellow - for neutral/consolidation
             else:
                 # Fallback for any unexpected range type
                 continue
@@ -987,5 +987,5 @@ class FractalStrategy(IStrategy):
             else:
                 logger.debug(f"Skipping annotation with insufficient price range: {y_start:.6f} - {y_end:.6f}")
 
-        logger.debug(f"Created {len(annotations)} peak-trough annotations for {pair}")
+        logger.debug(f"Created {len(annotations)} market structure annotations for {pair}")
         return annotations

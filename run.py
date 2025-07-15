@@ -46,7 +46,7 @@ data_location = config["datadir"]
 
 # Date range configuration
 date_range_days = 1  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
-overall_start = "2025-06-01"
+overall_start = "2025-07-01"
 overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=timezone.utc).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
@@ -67,8 +67,14 @@ stake_currency = "USDT"
 # pairs_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'SUI', 'TRX', 'LINK']
 pairs_symbols = ['ETH', 'BNB', 'SUI', 'BTC', 'TRX', 'SOL', 'DOGE']
 
-# Initialize strategy and get timeframes
-strategy = FractalStrategy(config=config)
+exchange = Binance(config) # Assuming Binance, adjust if necessary
+
+# Now load strategy using StrategyResolver (which properly handles the config)
+strategy = StrategyResolver.load_strategy(config)
+strategy.dp = DataProvider(config, exchange, None)
+strategy.ft_bot_start()
+
+# get timeframes
 primary_timeframe = strategy.primary_timeframe
 major_timeframe = strategy.major_timeframe
 
@@ -97,7 +103,6 @@ all_trades = load_backtest_data(backtest_dir)
 strategy_name = config["strategy"] # Use the strategy name from config
 
 loaded_strategy = StrategyResolver.load_strategy(config)
-exchange = Binance(config) # Assuming Binance, adjust if necessary
 loaded_strategy.dp = DataProvider(config, exchange, None)
 loaded_strategy.ft_bot_start()
 
