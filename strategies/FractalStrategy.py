@@ -115,7 +115,7 @@ class FractalStrategy(IStrategy):
 
     # Parameters for tuning
     volume_threshold = DecimalParameter(
-        1.0, 3.0, default=1.5, space="buy", optimize=False
+        1.0, 3.0, default=1.5, space="buy", optimize=True
     )
 
     # Laguerre RSI parameters
@@ -143,19 +143,17 @@ class FractalStrategy(IStrategy):
         0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=False
     )
     trailing_stop_ratio = DecimalParameter(
-        3.0, 20.0, default=2.0, decimals=1, space="sell", load=True, optimize=True
+        0.05, 0.5, default=0.2, decimals=2, space="sell", load=True, optimize=True
     )
-
-    test_compounding_mode: bool = True
 
     _force_leverage_one_for_this_trade: bool = False
 
-    def is_backtest_mode(self) -> bool:
-        """Check if the current run mode is backtest or hyperopt"""
-        return self.dp.runmode.value in ["backtest", "hyperopt"]
+    def is_hyperopt_mode(self) -> bool:
+        """Check if the current run mode is hyperopt"""
+        return self.dp.runmode.value == "hyperopt"
 
     def get_total_equity(self):
-        if self.is_backtest_mode() and not self.test_compounding_mode:
+        if self.is_hyperopt_mode():
             # Get values from config, with defaults if not set
             ratio = self.config.get("tradable_balance_ratio", 1.0)
             wallet = self.config.get("dry_run_wallet", 1000)
@@ -666,7 +664,7 @@ class FractalStrategy(IStrategy):
         current_profit: float,
         after_fill: bool = False,
         **kwargs,
-    ) -> Optional[float]:
+    ) -> float | None:
         """
         Custom stop loss based on ATR and support/resistance levels
         """
@@ -684,21 +682,11 @@ class FractalStrategy(IStrategy):
 
             # For long positions
             if not trade.is_short:
-                # Use ATR-based stop loss (2 * ATR)
-                atr_stop = last_candle["low"] - (
-                    self.trailing_stop_ratio.value * last_candle["atr"]
-                )
 
                 # Use the more conservative stop (higher for long)
-                stop_loss_price = max(
-                    atr_stop,
-                    (
-                        last_candle.get(f"trough_{self.primary_timeframe}", 0) * 0.998
-                        if f"trough_{self.primary_timeframe}" in last_candle
-                        and not pd.isna(last_candle[f"trough_{self.primary_timeframe}"])
-                        else atr_stop
-                    ),
-                )
+                stop_loss_price = last_candle.get(
+                    f"trough_{self.primary_timeframe}", 0
+                ) * (1 - self.trailing_stop_ratio.value)
 
                 # Ensure stop is not too tight (at least 0.01% below entry)
                 min_stop = trade.open_rate * 0.999
@@ -706,23 +694,11 @@ class FractalStrategy(IStrategy):
 
             # For short positions
             else:
-                # Use ATR-based stop loss (2 * ATR)
-                atr_stop = last_candle["high"] + (
-                    self.trailing_stop_ratio.value * last_candle["atr"]
-                )
 
                 # Use the more conservative stop (lower for short)
-                stop_loss_price = min(
-                    atr_stop,
-                    (
-                        last_candle.get(f"peak_{self.primary_timeframe}", float("inf"))
-                        * 1.002
-                        if f"peak_{self.primary_timeframe}" in last_candle
-                        and not pd.isna(last_candle[f"peak_{self.primary_timeframe}"])
-                        else atr_stop
-                    ),
-                )
-
+                stop_loss_price = last_candle.get(
+                    f"peak_{self.primary_timeframe}", float("inf")
+                ) * (1 + self.trailing_stop_ratio.value)
                 # Ensure stop is not too tight (at least 0.1% above entry)
                 max_stop = trade.open_rate * 1.001
                 stop_loss_price = min(stop_loss_price, max_stop)
@@ -797,10 +773,10 @@ class FractalStrategy(IStrategy):
         current_time: datetime,
         current_rate: float,
         proposed_stake: float,
-        min_stake: Optional[float],
+        min_stake: float | None,
         max_stake: float,
         leverage: float,
-        entry_tag: Optional[str],
+        entry_tag: str | None,
         side: str,
         **kwargs,
     ) -> float:
