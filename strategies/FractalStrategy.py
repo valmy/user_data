@@ -115,7 +115,7 @@ class FractalStrategy(IStrategy):
 
     # Parameters for tuning
     volume_threshold = DecimalParameter(
-        1.0, 3.0, default=1.5, space="buy", optimize=True
+        1.0, 4.0, default=2, decimals=1, space="buy", optimize=True
     )
 
     # Laguerre RSI parameters
@@ -1119,26 +1119,26 @@ class FractalStrategy(IStrategy):
 
         # Create ranges between transition points
         ranges = []
-        for i in range(len(transition_points) - 1):
+        for i in range(1, len(transition_points)):
+            prev_point = transition_points.iloc[i - 1]
             current_point = transition_points.iloc[i]
-            next_point = transition_points.iloc[i + 1]
 
             # Determine the relationship type for this range
+            prev_peak = prev_point[peak_col]
+            prev_trough = prev_point[trough_col]
             current_peak = current_point[peak_col]
             current_trough = current_point[trough_col]
-            next_peak = next_point[peak_col]
-            next_trough = next_point[trough_col]
 
             # Classify the range based on directional movement
             range_type = None
 
             # Calculate percentage changes for peaks and troughs
             peak_change_pct = (
-                (next_peak - current_peak) / current_peak if current_peak > 0 else 0
+                (current_peak - prev_peak) / prev_peak if prev_peak > 0 else 0
             )
             trough_change_pct = (
-                (next_trough - current_trough) / current_trough
-                if current_trough > 0
+                (current_trough - prev_trough) / prev_trough
+                if prev_trough > 0
                 else 0
             )
 
@@ -1176,21 +1176,21 @@ class FractalStrategy(IStrategy):
 
             ranges.append(
                 {
-                    "start": current_point["date"],
-                    "end": next_point["date"],
+                    "start": prev_point["date"],
+                    "end": current_point["date"],
                     "type": range_type,
-                    "start_peak": current_peak,
-                    "start_trough": current_trough,
-                    "end_peak": next_peak,
-                    "end_trough": next_trough,
+                    "start_peak": prev_peak,
+                    "start_trough": prev_trough,
+                    "end_peak": current_peak,
+                    "end_trough": current_trough,
                 }
             )
 
         # Create annotations from merged ranges
         for range_data in ranges:
             # Calculate y_start and y_end
-            y_start = min(range_data["start_trough"], range_data["end_trough"])
-            y_end = max(range_data["start_peak"], range_data["end_peak"])
+            y_start = range_data["start_trough"]
+            y_end = range_data["start_peak"]
 
             # Set colors based on market structure bias
             if range_data["type"] == "bullish":

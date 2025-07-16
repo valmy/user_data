@@ -45,7 +45,7 @@ data_location = config["datadir"]
 
 # Date range configuration
 date_range_days = 1  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
-overall_start = "2025-06-01"
+overall_start = "2025-07-01"
 overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=timezone.utc).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
@@ -100,14 +100,15 @@ df = loaded_strategy.analyze_ticker(candles, {"pair": pair})
 # Strategy and exchange are already loaded above
 
 # print(candles)
+print(df.loc[
+    (df['date'] >= datetime(2025, 7, 15, 22, 15, tzinfo=timezone.utc)) &
+    (df['date'] <= datetime(2025, 7, 15, 23, 45, tzinfo=timezone.utc)),
+    ['date', 'high', 'low', 'trough_15m', 'peak_15m']
+])
 # print(all_trades)
 
-start_date = datetime.strptime("2025-07-14", "%Y-%m-%d").replace(tzinfo=timezone.utc)
+start_date = datetime.strptime("2025-07-15", "%Y-%m-%d").replace(tzinfo=timezone.utc)
 end_date = start_date + timedelta(days=1)
-
-# Print peaks and troughs for the specified date range
-print(df.loc[(df['date'] >= start_date) & (df['date'] <= end_date),
-             ['date', 'peak_15m', 'trough_15m']])
 
 annotations = loaded_strategy.plot_annotations(
     pair=pair,
