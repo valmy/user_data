@@ -576,7 +576,7 @@ print(stats["strategy_comparison"])
 # Print all trades with date, pair, and profit details
 print("\nAll Trades (from backtest results):")
 if not all_trades.empty:
-    print(all_trades[['open_date', 'pair', 'profit_ratio', 'profit_abs', 'exit_reason', 'trade_duration']])
+    print(all_trades[['open_date', 'pair', 'profit_ratio', 'profit_abs', 'exit_tag', 'trade_duration']])
 else:
     print("No trades found in the backtest results.")
 

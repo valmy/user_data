@@ -597,7 +597,6 @@ class FractalStrategy(IStrategy):
             # Initialize exit columns
             df["exit_long"] = 0
             df["exit_short"] = 0
-            df["exit_reason"] = ""  # New column to store exit reason
 
             try:
                 hh_col = f"higher_high_{self.primary_timeframe}"
@@ -650,8 +649,7 @@ class FractalStrategy(IStrategy):
                     else:
                         reason = "unknown"
 
-                    df.loc[exit_short_condition, ["exit_short", "exit_tag"]] = (1, reason
-                    )
+                    df.loc[exit_short_condition, ["exit_short", "exit_tag"]] = (1, reason)
 
                 return df
             except Exception as e_inner:
@@ -668,9 +666,6 @@ class FractalStrategy(IStrategy):
             # Return dataframe with no exits if there's an error
             dataframe["exit_long"] = 0
             dataframe["exit_short"] = 0
-            dataframe["exit_reason"] = (
-                ""  # Ensure the column exists even if there's an error
-            )
             return dataframe
 
     def custom_stoploss(
@@ -703,15 +698,15 @@ class FractalStrategy(IStrategy):
             )
 
             if after_fill and not take_profit_reduced:
-                # If after fill and take profit not reduced, set stop loss to 1% below entry
+                # If after fill and take profit not reduced, set stop loss to 0.2% below trough
                 if not trade.is_short:
                     stop_loss_price = last_candle.get(
                         f"trough_{self.primary_timeframe}", 0
-                    ) * 0.99
+                    ) * 0.998
                 else:
                     stop_loss_price = last_candle.get(
                         f"peak_{self.primary_timeframe}", float("inf")
-                    ) * 1.01
+                    ) * 1.002
 
             else:
                 trailing_atr = self.atr_stop_ratio.value * last_candle['atr']
