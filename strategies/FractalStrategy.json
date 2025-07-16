@@ -17,18 +17,19 @@
     "buy": {
       "buy_laguerre_level": 0.2,
       "laguerre_gamma": 0.68,
-      "max_risk_per_trade": 0.02,
       "major_chop_threshold": 40,
+      "max_risk_per_trade": 0.02,
       "primary_chop_threshold": 38,
       "small_candle_ratio": 1.9,
       "volume_threshold": 2.074
     },
     "sell": {
       "sell_laguerre_level": 0.8,
-      "trailing_stop_ratio": 0.43
+      "atr_stop_ratio": 5.6,
+      "trailing_stop_ratio": 0.19
     },
     "protection": {}
   },
   "ft_stratparam_v": 1,
-  "export_time": "2025-07-15 19:50:25.647833+00:00"
+  "export_time": "2025-07-16 04:21:00.022174+00:00"
 }

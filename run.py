@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 # Change directory
 # Modify this cell to insure that the output shows the correct path.
 # Define all paths relative to the project root shown in the cell output
-project_root = "/freqtrade"
+project_root = "."
 i = 0
 try:
     os.chdir(project_root)

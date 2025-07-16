@@ -93,6 +93,12 @@ candles = load_pair_history(
     candle_type=CandleType.FUTURES, # This will be used inside the loop per pair
 ) # This initial call might not be strictly necessary if immediately looped
 
+print(candles.loc[
+    (candles['date'] >= datetime(2025, 7, 15, 7, 30, tzinfo=timezone.utc)) &
+    (candles['date'] <= datetime(2025, 7, 15, 8, 15, tzinfo=timezone.utc)),
+    ['date', 'open', 'close', 'high', 'low', 'volume']
+])
+
 
 df = loaded_strategy.analyze_ticker(candles, {"pair": pair})
 
@@ -101,20 +107,23 @@ df = loaded_strategy.analyze_ticker(candles, {"pair": pair})
 
 # print(candles)
 print(df.loc[
-    (df['date'] >= datetime(2025, 7, 15, 22, 15, tzinfo=timezone.utc)) &
-    (df['date'] <= datetime(2025, 7, 15, 23, 45, tzinfo=timezone.utc)),
-    ['date', 'high', 'low', 'trough_15m', 'peak_15m']
+    (df['date'] >= datetime(2025, 7, 15, 7, 30, tzinfo=timezone.utc)) &
+    (df['date'] <= datetime(2025, 7, 15, 8, 15, tzinfo=timezone.utc)),
+    ['date', 'high', 'low', 'trough_15m', 'peak_15m', 'donchian_upper_15m', 'donchian_lower_15m']
 ])
 # print(all_trades)
 
-start_date = datetime.strptime("2025-07-15", "%Y-%m-%d").replace(tzinfo=timezone.utc)
-end_date = start_date + timedelta(days=1)
+# start_date = datetime.strptime("2025-07-15", "%Y-%m-%d").replace(tzinfo=timezone.utc)
+# end_date = start_date + timedelta(days=1)
 
-annotations = loaded_strategy.plot_annotations(
-    pair=pair,
-    start_date=start_date,
-    end_date=end_date,
-    dataframe=df,
-)
+# annotations = loaded_strategy.plot_annotations(
+#     pair=pair,
+#     start_date=start_date,
+#     end_date=end_date,
+#     dataframe=df,
+# )
 
-pprint.pprint(annotations)
+# pprint.pprint(annotations)
+
+# print(all_trades.keys())
+# print(all_trades.loc[:, ['close_date', 'pair', 'profit_abs', 'stop_loss_abs']])

@@ -90,7 +90,7 @@ class FractalStrategy(IStrategy):
     use_exit_signal = True
     exit_profit_only = False
     ignore_roi_if_entry_signal = False
-    use_custom_stoploss = False
+    use_custom_stoploss = True
 
     signal_timeframe_minutes = timeframe_to_minutes(timeframe)
     primary_timeframe_minutes = timeframe_to_minutes(primary_timeframe)
@@ -144,6 +144,10 @@ class FractalStrategy(IStrategy):
     )
     trailing_stop_ratio = DecimalParameter(
         0.05, 0.5, default=0.2, decimals=2, space="sell", load=True, optimize=True
+    )
+
+    atr_stop_ratio = DecimalParameter(
+        0.05, 10.0, default=5.0, decimals=1, space="sell", load=True, optimize=True
     )
 
     _force_leverage_one_for_this_trade: bool = False
@@ -625,15 +629,29 @@ class FractalStrategy(IStrategy):
                     exit_short_price_condition | exit_short_trend_condition
                 )
 
+                # Set exit reason based on which condition triggered the exit
+                reason = ""
+                if exit_long_price_condition.any():
+                    reason = "price"
+                elif exit_long_trend_condition.any():
+                    reason = "trend"
+                else:
+                    reason = "unknown"
+
                 # Apply exit conditions and set exit reason
-                df.loc[exit_long_condition, "exit_long"] = 1
-                df.loc[exit_long_price_condition, "exit_reason"] = "price"
-                df.loc[exit_long_trend_condition, "exit_reason"] = "trend"
+                df.loc[exit_long_condition, ["exit_long", "exit_tag"]] = (1, reason)
 
                 if self.can_short:
-                    df.loc[exit_short_condition, "exit_short"] = 1
-                    df.loc[exit_short_price_condition, "exit_reason"] = "price"
-                    df.loc[exit_short_trend_condition, "exit_reason"] = "trend"
+                    reason = ""
+                    if exit_short_price_condition.any():
+                        reason = "price"
+                    elif exit_short_trend_condition.any():
+                        reason = "trend"
+                    else:
+                        reason = "unknown"
+
+                    df.loc[exit_short_condition, ["exit_short", "exit_tag"]] = (1, reason
+                    )
 
                 return df
             except Exception as e_inner:
@@ -680,28 +698,50 @@ class FractalStrategy(IStrategy):
             # Get the last candle
             last_candle = dataframe.iloc[-1].squeeze()
 
-            # For long positions
-            if not trade.is_short:
+            take_profit_reduced = trade.get_custom_data(
+                key="take_profit_reduced", default=False
+            )
 
-                # Use the more conservative stop (higher for long)
-                stop_loss_price = last_candle.get(
-                    f"trough_{self.primary_timeframe}", 0
-                ) * (1 - self.trailing_stop_ratio.value)
+            if after_fill and not take_profit_reduced:
+                # If after fill and take profit not reduced, set stop loss to 1% below entry
+                if not trade.is_short:
+                    stop_loss_price = last_candle.get(
+                        f"trough_{self.primary_timeframe}", 0
+                    ) * 0.99
+                else:
+                    stop_loss_price = last_candle.get(
+                        f"peak_{self.primary_timeframe}", float("inf")
+                    ) * 1.01
 
-                # Ensure stop is not too tight (at least 0.01% below entry)
-                min_stop = trade.open_rate * 0.999
-                stop_loss_price = max(stop_loss_price, min_stop)
-
-            # For short positions
             else:
+                trailing_atr = self.atr_stop_ratio.value * last_candle['atr']
 
-                # Use the more conservative stop (lower for short)
-                stop_loss_price = last_candle.get(
-                    f"peak_{self.primary_timeframe}", float("inf")
-                ) * (1 + self.trailing_stop_ratio.value)
-                # Ensure stop is not too tight (at least 0.1% above entry)
-                max_stop = trade.open_rate * 1.001
-                stop_loss_price = min(stop_loss_price, max_stop)
+                # For long positions
+                if not trade.is_short:
+                    atr_stop_price = last_candle["close"] - trailing_atr
+                    # Use the more conservative stop (higher for long)
+                    stop_loss_price = last_candle.get(
+                        f"trough_{self.primary_timeframe}", 0
+                    ) * (1 - self.trailing_stop_ratio.value)
+
+                    higher_stop = max(atr_stop_price, stop_loss_price)
+
+                    # Ensure stop is not too tight (at least 0.01% below entry)
+                    min_stop = trade.open_rate * 0.999
+                    stop_loss_price = min(higher_stop, min_stop)
+
+                # For short positions
+                else:
+                    atr_stop_price = last_candle["close"] + trailing_atr
+                    # Use the more conservative stop (lower for short)
+                    stop_loss_price = last_candle.get(
+                        f"peak_{self.primary_timeframe}", float("inf")
+                    ) * (1 + self.trailing_stop_ratio.value)
+
+                    lower_stop = min(atr_stop_price, stop_loss_price)
+                    # Ensure stop is not too tight (at least 0.1% above entry)
+                    max_stop = trade.open_rate * 1.001
+                    stop_loss_price = max(lower_stop, max_stop)
 
             # Convert to percentage
             if stop_loss_price > 0:
@@ -714,11 +754,11 @@ class FractalStrategy(IStrategy):
 
                 # Only log when there's an actual change in stop loss value
                 # Use a small epsilon for floating point comparison
-                epsilon = 1e-8  # Small value to account for floating point precision
+                epsilon = 1.01  # Update stop loss only if the change is more than 1%
                 current_stop_loss = trade.stop_loss if trade.stop_loss else 0
 
                 # Check if the difference is significant (greater than epsilon)
-                stop_loss_changed = abs(stop_loss_price - current_stop_loss) > epsilon
+                stop_loss_changed = abs(stop_loss_price / current_stop_loss) > epsilon
 
                 if stop_loss_changed:
                     logger.info(
@@ -726,6 +766,8 @@ class FractalStrategy(IStrategy):
                         f"({'short' if trade.is_short else 'long'}): "
                         f"price={stop_loss_price:.6f}, percent={final_stoploss:.4%}"
                     )
+                else:
+                    return None
 
                 return final_stoploss
             return None
