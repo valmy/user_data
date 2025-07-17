@@ -138,6 +138,8 @@ class FractalStrategy(IStrategy):
     )
     major_chop_threshold = IntParameter(35, 50, default=40, space="buy", optimize=True)
 
+    use_cradle_zone = BooleanParameter(default=True, space="buy", optimize=True)
+
     # Custom trade size parameters
     max_risk_per_trade = DecimalParameter(
         0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=False
@@ -384,9 +386,19 @@ class FractalStrategy(IStrategy):
         Adds indicators for secondary trends and generates buy/sell signals
         """
         # Secondary trend indicators
+        dataframe["ema10"] = ta.EMA(dataframe, timeperiod=10)
         dataframe["ema20"] = ta.EMA(dataframe, timeperiod=20)
         dataframe["ema50"] = ta.EMA(dataframe, timeperiod=50)
         dataframe["ema200"] = ta.EMA(dataframe, timeperiod=200)
+
+        # Define in_cradle zone when the current candle is within the cradle zone,
+        # which is defined as the range between ema10 and ema20
+        ema_min = dataframe[["ema10", "ema20"]].min(axis=1)
+        ema_max = dataframe[["ema10", "ema20"]].max(axis=1)
+        dataframe["in_cradle"] = (
+            ((dataframe["high"] >= ema_min) & (dataframe["high"] <= ema_max)) |
+            ((dataframe["low"] >= ema_min) & (dataframe["low"] <= ema_max))
+        )
 
         # Laguerre RSI
         dataframe["laguerre"] = indicators.laguerre(
@@ -498,6 +510,9 @@ class FractalStrategy(IStrategy):
                             dataframe["laguerre"], self.buy_laguerre_level.value
                         )
                     )
+                    &
+                    # in cradle zone
+                    self.use_cradle_zone.value & df["in_cradle"]
                     &
                     # confirmation: strong volume
                     df["strong_volume"]
