@@ -7,7 +7,7 @@
     freqtrade_branch: "2025.5"  # or "stable" (check tags)
     strategy_repo: "https://github.com/valmy/user_data.git"
     strategy_dir: "/home/freqtrade/freqtrade/user_data"
-    config_local_path: "{{ playbook_dir }}/../config.json"  # Path to your local config file in user_data directory
+    config_local_path: "{{ playbook_dir }}/../config-private-binance.json"  # Path to your local config file in user_data directory
     venv_dir: "/home/freqtrade/.venv"
     service_name: "freqtrade"
 
@@ -88,7 +88,7 @@
     - name: Copy local config file
       copy:
         src: "{{ config_local_path }}"
-        dest: "/home/freqtrade/freqtrade/user_data/config.json"
+        dest: "/home/freqtrade/freqtrade/user_data/config-private-binance.json"
         owner: freqtrade
         group: freqtrade
         mode: '0600'

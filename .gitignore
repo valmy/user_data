@@ -1,5 +1,5 @@
 backtest_results/
-config.json
+config-private-binance.json
 config-hyperliquid.json
 config-private-nfi.json
 data/

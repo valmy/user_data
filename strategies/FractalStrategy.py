@@ -749,7 +749,7 @@ class FractalStrategy(IStrategy):
 
                 # Only log when there's an actual change in stop loss value
                 # Use a small epsilon for floating point comparison
-                epsilon = 1.01  # Update stop loss only if the change is more than 1%
+                epsilon = 1.005  # Update stop loss only if the change is more than 0.5%
                 current_stop_loss = trade.stop_loss if trade.stop_loss else 0
 
                 # Check if the difference is significant (greater than epsilon)

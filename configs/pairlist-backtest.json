@@ -1,0 +1,48 @@
+{
+  "stake_currency": "USDT",
+  "exchange": {
+    "name": "binance",
+    "pair_whitelist": [
+      "ETH/USDT:USDT",
+      "BNB/USDT:USDT",
+      "SUI/USDT:USDT",
+      "BTC/USDT:USDT",
+      "TRX/USDT:USDT",
+      "SOL/USDT:USDT",
+      "DOGE/USDT:USDT",
+      "LINK/USDT:USDT",
+      "XRP/USDT:USDT",
+      "1000PEPE/USDT:USDT",
+      "ADA/USDT:USDT",
+      "BCH/USDT:USDT"
+    ],
+    "pair_blacklist": [
+      // "SUI/USDT:USDT",
+      // "TRX/USDT:USDT",
+      // "BTC/USDT:USDT",
+      // "BNB/USDT:USDT",
+      "LINK/USDT:USDT",
+      "XRP/USDT:USDT",
+      "1000PEPE/USDT:USDT",
+      "ADA/USDT:USDT",
+      "BCH/USDT:USDT"
+    ]
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "entry_pricing": {
+    "use_order_book": true,
+    "order_book_top": 1,
+    "check_depth_of_market": {
+      "enabled": false,
+      "bids_to_ask_delta": 1
+    }
+  },
+  "exit_pricing": {
+    "use_order_book": true,
+    "order_book_top": 1
+  }
+}
