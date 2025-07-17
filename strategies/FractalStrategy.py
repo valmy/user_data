@@ -396,8 +396,7 @@ class FractalStrategy(IStrategy):
         ema_min = dataframe[["ema10", "ema20"]].min(axis=1)
         ema_max = dataframe[["ema10", "ema20"]].max(axis=1)
         dataframe["in_cradle"] = (
-            ((dataframe["high"] >= ema_min) & (dataframe["high"] <= ema_max)) |
-            ((dataframe["low"] >= ema_min) & (dataframe["low"] <= ema_max))
+            (dataframe["high"] >= ema_min) & (dataframe["low"] <= ema_max)
         )
 
         # Laguerre RSI
@@ -512,7 +511,7 @@ class FractalStrategy(IStrategy):
                     )
                     &
                     # in cradle zone
-                    self.use_cradle_zone.value & df["in_cradle"]
+                    self.use_cradle_zone.value & df["in_cradle"] & (df["ema20"] > df["ema10"])
                     &
                     # confirmation: strong volume
                     df["strong_volume"]
@@ -539,6 +538,9 @@ class FractalStrategy(IStrategy):
                             dataframe["laguerre"], self.sell_laguerre_level.value
                         )
                     )
+                    &
+                    # in cradle zone
+                    self.use_cradle_zone.value & df["in_cradle"] & (df["ema20"] < df["ema10"])
                     &
                     # confirmation: strong volume
                     df["strong_volume"]
