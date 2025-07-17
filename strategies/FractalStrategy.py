@@ -522,7 +522,7 @@ class FractalStrategy(IStrategy):
                     # small candle condition
                     df["small_candle"]
                     &
-                    # at least 2 of the last 3 major heikin ashi candles are bullish
+                    # at least 3 of the last 4 major heikin ashi candles are bullish
                     df[ha_upswing_col]
                     &
                     # enough energy (using pre-calculated conditions)
@@ -551,7 +551,7 @@ class FractalStrategy(IStrategy):
                     # small candle condition
                     df["small_candle"]
                     &
-                    # at least 2 of the last 3 major heikin ashi candles are bearish
+                    # at least 3 of the last 4 major heikin ashi candles are bearish
                     df[ha_downswing_col]
                     &
                     # enough energy
