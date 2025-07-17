@@ -749,7 +749,7 @@ class FractalStrategy(IStrategy):
 
                 # Only log when there's an actual change in stop loss value
                 # Use a small epsilon for floating point comparison
-                epsilon = 1.005  # Update stop loss only if the change is more than 0.5%
+                epsilon = 1.001  # Update stop loss only if the change is more than 0.1%
                 current_stop_loss = trade.stop_loss if trade.stop_loss else 0
 
                 # Check if the difference is significant (greater than epsilon)
@@ -1163,50 +1163,15 @@ class FractalStrategy(IStrategy):
             # Determine the relationship type for this range
             prev_peak = prev_point[peak_col]
             prev_trough = prev_point[trough_col]
-            current_peak = current_point[peak_col]
-            current_trough = current_point[trough_col]
 
             # Classify the range based on directional movement
             range_type = None
 
-            # Calculate percentage changes for peaks and troughs
-            peak_change_pct = (
-                (current_peak - prev_peak) / prev_peak if prev_peak > 0 else 0
-            )
-            trough_change_pct = (
-                (current_trough - prev_trough) / prev_trough
-                if prev_trough > 0
-                else 0
-            )
-
-            # Determine if changes are significant (> 0.1%)
-            peak_changed_significantly = abs(peak_change_pct) > 0.001
-            trough_changed_significantly = abs(trough_change_pct) > 0.001
-
-            # Determine directional bias
-            peak_rising = peak_change_pct > 0.001
-            peak_falling = peak_change_pct < -0.001
-            trough_rising = trough_change_pct > 0.001
-            trough_falling = trough_change_pct < -0.001
-
             # Classify based on overall market structure direction
-            if (
-                (peak_rising and trough_rising)
-                or (peak_rising and not trough_changed_significantly)
-                or (trough_rising and not peak_changed_significantly)
-            ):
-                # Both rising OR one rising with other stable = bullish structure
+            if (prev_point.get(f"ha_upswing_{self.major_timeframe}")):
                 range_type = "bullish"
-            elif (
-                (peak_falling and trough_falling)
-                or (peak_falling and not trough_changed_significantly)
-                or (trough_falling and not peak_changed_significantly)
-            ):
-                # Both falling OR one falling with other stable = bearish structure
+            elif (prev_point.get(f"ha_downswing_{self.major_timeframe}")):
                 range_type = "bearish"
-            elif (peak_rising and trough_falling) or (peak_falling and trough_rising):
-                # Peaks and troughs moving in opposite directions = neutral/consolidation
-                range_type = "neutral"
             else:
                 # Fallback for edge cases
                 range_type = "neutral"
@@ -1217,9 +1182,7 @@ class FractalStrategy(IStrategy):
                     "end": current_point["date"],
                     "type": range_type,
                     "start_peak": prev_peak,
-                    "start_trough": prev_trough,
-                    "end_peak": current_peak,
-                    "end_trough": current_trough,
+                    "start_trough": prev_trough
                 }
             )
 
