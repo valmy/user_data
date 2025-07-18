@@ -428,19 +428,29 @@ class FractalStrategy(IStrategy):
         )
 
         dataframe["candle_range"] = dataframe["high"] - dataframe["low"]
-        dataframe["bullish_candle"] = dataframe["close"] > dataframe["low"] + 0.7 * dataframe["candle_range"]
-        dataframe["bearish_candle"] = dataframe["close"] < dataframe["high"] - 0.7 * dataframe["candle_range"]
+        dataframe["bullish_candle"] = (
+            dataframe["close"] > dataframe["low"] + 0.7 * dataframe["candle_range"]
+        )
+        dataframe["bearish_candle"] = (
+            dataframe["close"] < dataframe["high"] - 0.7 * dataframe["candle_range"]
+        )
         # Small candle condition: candle range must be smaller than small_candle_ratio * ATR
         dataframe["small_candle"] = dataframe["candle_range"] < (
             self.small_candle_ratio.value * dataframe["atr"]
         )
 
-        # Donchian Channels (using 30-period window)
-        dataframe["donchian_upper"] = dataframe["high"].rolling(window=30).max()
-        dataframe["donchian_lower"] = dataframe["low"].rolling(window=30).min()
+        # Donchian Channels (using 36-period window)
+        major_period: int = int(3 * self.ratio_major_to_signal)
+        primary_period: int = int(3 * self.ratio_primary_to_signal)
+        dataframe["donchian_upper"] = (
+            dataframe["high"].rolling(window=major_period).max()
+        )
+        dataframe["donchian_lower"] = (
+            dataframe["low"].rolling(window=major_period).min()
+        )
 
-        dataframe["stop_upper"] = dataframe["high"].rolling(window=10).max()
-        dataframe["stop_lower"] = dataframe["low"].rolling(window=10).min()
+        dataframe["stop_upper"] = dataframe["high"].rolling(window=primary_period).max()
+        dataframe["stop_lower"] = dataframe["low"].rolling(window=primary_period).min()
 
         return dataframe
 
@@ -529,7 +539,11 @@ class FractalStrategy(IStrategy):
                 )
 
                 # LONG Entry Conditions
-                long_rr_cond = (df["long_rr_ratio"] >= self.rr_ratio.value) if self.use_rr_ratio.value else True
+                long_rr_cond = (
+                    (df["long_rr_ratio"] >= self.rr_ratio.value)
+                    if self.use_rr_ratio.value
+                    else True
+                )
 
                 # --- Trigger conditions mapping ---
                 long_trigger_conditions = {
@@ -539,22 +553,25 @@ class FractalStrategy(IStrategy):
                         )
                     ),
                     "cradle": (
-                        (df.shift(-1)["in_cradle"])
+                        (df["in_cradle"].shift(1))
                         & (df["ema20"] < df["ema10"])
-                        & (df["close"] > df.shift(-1)["high"])
-                        & (df.shift(-1)["bullish_candle"])
+                        & (df["close"] > df["high"].shift(1))
+                        & (df["bullish_candle"].shift(1))
                         & (df["bullish_candle"])
-                        & (df.shift(-1)["small_candle"])
+                        & (df["small_candle"].shift(1))
                     ),
                     "breakout": (
                         qtpylib.crossed_above(
-                            df["close"], df[f"donchian_upper_{self.major_timeframe}"]
+                            df["close"], df["donchian_upper"].shift(1)
                         )
                         & (df["bullish_candle"])
                     ),
                     # Add more trigger types here as needed
                 }
-                long_trigger_condition = long_trigger_conditions.get(self.trigger_type.value, pd.Series([False]*len(df), index=df.index))
+                long_trigger_condition = long_trigger_conditions.get(
+                    self.trigger_type.value,
+                    pd.Series([False] * len(df), index=df.index)
+                )
 
                 short_trigger_conditions = {
                     "lrsi": (
@@ -563,22 +580,25 @@ class FractalStrategy(IStrategy):
                         )
                     ),
                     "cradle": (
-                        (df.shift(-1)["in_cradle"])
+                        (df["in_cradle"].shift(1))
                         & (df["ema20"] > df["ema10"])
-                        & (df["close"] < df.shift(-1)["low"])
-                        & (df.shift(-1)["bearish_candle"])
+                        & (df["close"] < df["low"].shift(1))
+                        & (df["bearish_candle"].shift(1))
                         & (df["bearish_candle"])
-                        & (df.shift(-1)["small_candle"])
+                        & (df["small_candle"].shift(1))
                     ),
                     "breakout": (
                         qtpylib.crossed_below(
-                            df["close"], df[f"donchian_lower_{self.major_timeframe}"]
+                            df["close"], df["donchian_lower"].shift(1)
                         )
                         & (df["bearish_candle"])
                     ),
                     # Add more trigger types here as needed
                 }
-                short_trigger_condition = short_trigger_conditions.get(self.trigger_type.value, pd.Series([False]*len(df), index=df.index))
+                short_trigger_condition = short_trigger_conditions.get(
+                    self.trigger_type.value,
+                    pd.Series([False] * len(df), index=df.index)
+                )
 
                 long_condition = (
                     # signal: laguerre crosses above buy_laguerre_level
@@ -604,18 +624,10 @@ class FractalStrategy(IStrategy):
                 )
 
                 # SHORT Entry Conditions
-                short_rr_cond = (df["short_rr_ratio"] >= self.rr_ratio.value) if self.use_rr_ratio.value else True
-                short_trigger_condition = (
-                    (self.trigger_type.value == "lrsi")
-                    & qtpylib.crossed_below(
-                        df["laguerre"], self.sell_laguerre_level.value
-                    )
-                ) if self.trigger_type.value == "lrsi" else (
-                    (self.trigger_type.value == "breakout")
-                    & (df["close"] < df[f"donchian_lower_{self.major_timeframe}"])
-                    & (
-                        (df.shift(-1)["close"] < (df.shift(-1)["high"] - 0.7 * (df.shift(-1)["high"] - df.shift(-1)["low"])))
-                    )
+                short_rr_cond = (
+                    (df["short_rr_ratio"] >= self.rr_ratio.value)
+                    if self.use_rr_ratio.value
+                    else True
                 )
 
                 short_condition = (
@@ -716,62 +728,71 @@ class FractalStrategy(IStrategy):
                 # Exit LONG positions
                 exit_long_price_condition = df["close"] < df[trough_col]
                 exit_long_trend_condition = df[ll_col].astype(bool)
-                exit_tp_zone_condition = (
+                exit_long_tp_zone_condition = (
                     df["close"] > df[upper_tp_zone_col]
                 )
 
                 exit_long_condition = (
                     exit_long_price_condition | exit_long_trend_condition
-                    | (self.use_take_profit.value and exit_tp_zone_condition)
+                    | (self.use_take_profit.value and exit_long_tp_zone_condition)
                 )
 
                 # Exit SHORT positions
                 exit_short_price_condition = df["close"] > df[peak_col]
                 exit_short_trend_condition = df[hh_col].astype(bool)
+                exit_short_tp_zone_condition = df["close"] < df[lower_tp_zone_col]
 
                 exit_short_condition = (
                     exit_short_price_condition | exit_short_trend_condition
-                    | (self.use_take_profit.value and exit_tp_zone_condition)
+                    | (self.use_take_profit.value and exit_short_tp_zone_condition)
                 )
 
                 # Set exit reason based on which condition triggered the exit
                 reason = ""
-                if exit_long_price_condition.any():
-                    reason = "price"
-                elif exit_long_trend_condition.any():
+                if exit_long_trend_condition.any():
                     reason = "trend"
-                elif self.use_take_profit.value and exit_tp_zone_condition.any():
+                elif self.use_take_profit.value and exit_short_tp_zone_condition.any():
                     reason = "take_profit"
+                elif exit_long_price_condition.any():
+                    reason = "price"
                 else:
                     reason = "unknown"
 
                 # Apply exit conditions and set exit reason
-                df.loc[exit_long_condition, ["exit_long", "exit_tag"]] = (1, reason)
+                df.loc[exit_long_condition, ["exit_long", "exit_tag"]] = (
+                    1,
+                    reason
+                )
 
                 if self.can_short:
                     reason = ""
-                    if exit_short_price_condition.any():
-                        reason = "price"
-                    elif exit_short_trend_condition.any():
+                    if exit_short_trend_condition.any():
                         reason = "trend"
-                    elif self.use_take_profit.value and exit_tp_zone_condition.any():
+                    elif self.use_take_profit.value and exit_short_tp_zone_condition.any():
                         reason = "take_profit"
+                    elif exit_short_price_condition.any():
+                        reason = "price"
                     else:
                         reason = "unknown"
 
-                    df.loc[exit_short_condition, ["exit_short", "exit_tag"]] = (1, reason)
+                    df.loc[exit_short_condition, ["exit_short", "exit_tag"]] = (
+                        1,
+                        reason
+                    )
 
                 return df
             except Exception as e_inner:
                 logger.error(
-                    f"Error in exit trend condition calculation for {metadata['pair']}: {str(e_inner)}\n{traceback.format_exc()}"
+                    f"Error in exit trend condition calculation for {metadata['pair']}: "
+                    f"{str(e_inner)}\n{traceback.format_exc()}"
                 )
                 # df['exit_long'] = 0 and df['exit_short'] = 0 are already set
                 return df
 
         except Exception as e:
             logger.error(
-                f"Critical error in populate_exit_trend for {metadata['pair']}: {str(e)}\n{traceback.format_exc()}"
+                f"Critical error in populate_exit_trend for {metadata['pair']}: "
+                f"{str(e)}\n{traceback.format_exc()}"
             )
             # Return dataframe with no exits if there's an error
             dataframe["exit_long"] = 0
@@ -869,7 +890,8 @@ class FractalStrategy(IStrategy):
                     logger.info(
                         f"Stoploss update for {pair} "
                         f"({'short' if trade.is_short else 'long'}): "
-                        f"price={stop_loss_price:.6f}, percent={final_stoploss:.4%}"
+                        f"price={stop_loss_price:.6f}, "
+                        f"percent={final_stoploss:.4%}"
                     )
                 else:
                     return None
@@ -1067,13 +1089,20 @@ class FractalStrategy(IStrategy):
         return float(round(final_leverage, 6))  # Round to a sensible precision
 
     def order_filled(
-        self, pair: str, trade: Trade, order: Order, current_time: datetime, **kwargs
+        self,
+        pair: str,
+        trade: Trade,
+        order: Order,
+        current_time: datetime,
+        **kwargs,
     ) -> None:
         """
         Called right after an order fills.
         """
         logger.info(
-            f"Order filled callback triggered for {pair}: order_side={order.ft_order_side}, order_type={order.order_type}"
+            f"Order filled callback triggered for {pair}: "
+            f"order_side={order.ft_order_side}, "
+            f"order_type={order.order_type}"
         )
 
         # Exit if order is not an entry order
@@ -1119,8 +1148,10 @@ class FractalStrategy(IStrategy):
             return None  # Should not happen
 
         # Log the take profit price being set
-        logger.info(f"Setting take_profit_price={take_profit_price} for {pair}, "
-                    f"tp2={take_profit_2_price}")
+        logger.info(
+            f"Setting take_profit_price={take_profit_price} for {pair}, "
+            f"tp2={take_profit_2_price}"
+        )
         trade.set_custom_data(key="take_profit_price", value=take_profit_price)
         trade.set_custom_data(
             key="take_profit_2_price", value=take_profit_2_price
