@@ -123,7 +123,7 @@
       become: yes
       systemd:
         daemon_reload: yes
-        daemon_reload_timeout: 30
+        daemon_reload_timeout: 60
       register: reload_result
       until: reload_result is not failed
       retries: 3

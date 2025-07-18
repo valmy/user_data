@@ -113,6 +113,11 @@ class FractalStrategy(IStrategy):
     # Number of candles the strategy requires before producing valid signals
     startup_candle_count: int = max(50, 3 * ratio_major_to_signal)
 
+    # Trigger type
+    trigger_type = CategoricalParameter(
+        ["lrsi", "cradle", "breakout"], default="lrsi", space="buy", optimize=True
+    )
+
     # Parameters for tuning
     volume_threshold = DecimalParameter(
         1.0, 4.0, default=2, decimals=1, space="buy", optimize=True
@@ -120,7 +125,7 @@ class FractalStrategy(IStrategy):
 
     # Laguerre RSI parameters
     laguerre_gamma = DecimalParameter(
-        0.6, 0.8, default=0.68, decimals=2, space="buy", load=True, optimize=False
+        0.6, 0.8, default=0.68, decimals=2, space="buy", load=True, optimize=True
     )
     small_candle_ratio = DecimalParameter(
         1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=True
@@ -134,16 +139,23 @@ class FractalStrategy(IStrategy):
 
     # Choppiness Index parameters
     primary_chop_threshold = IntParameter(
-        35, 60, default=40, space="buy", optimize=True
+        35, 60, default=45, space="buy", load=False, optimize=False
     )
-    major_chop_threshold = IntParameter(35, 50, default=40, space="buy", optimize=True)
+    major_chop_threshold = IntParameter(
+        35, 50, default=40, space="buy", load=False, optimize=False
+    )
 
-    use_cradle_zone = BooleanParameter(default=True, space="buy", optimize=True)
+    use_rr_ratio = BooleanParameter(default=True, space="buy", optimize=True)
+    rr_ratio = DecimalParameter(
+        1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=True
+    )
 
     # Custom trade size parameters
     max_risk_per_trade = DecimalParameter(
         0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=False
     )
+
+    # Sell parameters
     trailing_stop_ratio = DecimalParameter(
         0.05, 0.5, default=0.2, decimals=2, space="sell", load=True, optimize=True
     )
@@ -151,6 +163,8 @@ class FractalStrategy(IStrategy):
     atr_stop_ratio = DecimalParameter(
         0.05, 10.0, default=5.0, decimals=1, space="sell", load=True, optimize=True
     )
+
+    use_take_profit = BooleanParameter(default=True, space="sell", optimize=True)
 
     _force_leverage_one_for_this_trade: bool = False
 
@@ -413,6 +427,14 @@ class FractalStrategy(IStrategy):
             dataframe["volume_mean"] * self.volume_threshold.value
         )
 
+        dataframe["candle_range"] = dataframe["high"] - dataframe["low"]
+        dataframe["bullish_candle"] = dataframe["close"] > dataframe["low"] + 0.7 * dataframe["candle_range"]
+        dataframe["bearish_candle"] = dataframe["close"] < dataframe["high"] - 0.7 * dataframe["candle_range"]
+        # Small candle condition: candle range must be smaller than small_candle_ratio * ATR
+        dataframe["small_candle"] = dataframe["candle_range"] < (
+            self.small_candle_ratio.value * dataframe["atr"]
+        )
+
         # Donchian Channels (using 30-period window)
         dataframe["donchian_upper"] = dataframe["high"].rolling(window=30).max()
         dataframe["donchian_lower"] = dataframe["low"].rolling(window=30).min()
@@ -495,32 +517,72 @@ class FractalStrategy(IStrategy):
                     <= df[f"peak_{self.primary_timeframe}"]
                 )
 
-                # Small candle condition: candle range must be smaller than small_candle_ratio * ATR
-                df["candle_range"] = df["high"] - df["low"]
-                df["small_candle"] = df["candle_range"] < (
-                    self.small_candle_ratio.value * df["atr"]
+                # RR ratio calculation, consider the donchian_upper in major timeframe as the target
+                # and trough in primary timeframe as the stop loss
+                df["long_rr_ratio"] = (
+                    (df[f"donchian_upper_{self.major_timeframe}"] - df["close"])
+                    / (df["close"] - df[f"trough_{self.primary_timeframe}"])
+                )
+                df["short_rr_ratio"] = (
+                    (df["close"] - df[f"donchian_lower_{self.major_timeframe}"])
+                    / (df[f"peak_{self.primary_timeframe}"] - df["close"])
                 )
 
                 # LONG Entry Conditions
+                long_rr_cond = (df["long_rr_ratio"] >= self.rr_ratio.value) if self.use_rr_ratio.value else True
+
+                # --- Trigger conditions mapping ---
+                long_trigger_conditions = {
+                    "lrsi": (
+                        qtpylib.crossed_above(
+                            df["laguerre"], self.buy_laguerre_level.value
+                        )
+                    ),
+                    "cradle": (
+                        (df.shift(-1)["in_cradle"])
+                        & (df["ema20"] < df["ema10"])
+                        & (df["close"] > df.shift(-1)["high"])
+                        & (df.shift(-1)["bullish_candle"])
+                        & (df["bullish_candle"])
+                        & (df.shift(-1)["small_candle"])
+                    ),
+                    "breakout": (
+                        qtpylib.crossed_above(
+                            df["close"], df[f"donchian_upper_{self.major_timeframe}"]
+                        )
+                        & (df["bullish_candle"])
+                    ),
+                    # Add more trigger types here as needed
+                }
+                long_trigger_condition = long_trigger_conditions.get(self.trigger_type.value, pd.Series([False]*len(df), index=df.index))
+
+                short_trigger_conditions = {
+                    "lrsi": (
+                        qtpylib.crossed_below(
+                            df["laguerre"], self.sell_laguerre_level.value
+                        )
+                    ),
+                    "cradle": (
+                        (df.shift(-1)["in_cradle"])
+                        & (df["ema20"] > df["ema10"])
+                        & (df["close"] < df.shift(-1)["low"])
+                        & (df.shift(-1)["bearish_candle"])
+                        & (df["bearish_candle"])
+                        & (df.shift(-1)["small_candle"])
+                    ),
+                    "breakout": (
+                        qtpylib.crossed_below(
+                            df["close"], df[f"donchian_lower_{self.major_timeframe}"]
+                        )
+                        & (df["bearish_candle"])
+                    ),
+                    # Add more trigger types here as needed
+                }
+                short_trigger_condition = short_trigger_conditions.get(self.trigger_type.value, pd.Series([False]*len(df), index=df.index))
+
                 long_condition = (
                     # signal: laguerre crosses above buy_laguerre_level
-                    (
-                        qtpylib.crossed_above(
-                            dataframe["laguerre"], self.buy_laguerre_level.value
-                        )
-                    )
-                    &
-                    # in cradle zone
-                    self.use_cradle_zone.value & df["in_cradle"] & (df["ema20"] > df["ema10"])
-                    &
-                    # confirmation: strong volume
-                    df["strong_volume"]
-                    &
-                    # df['above_ema20'] &
-                    df["above_resistance"]
-                    &
-                    # small candle condition
-                    df["small_candle"]
+                    long_trigger_condition
                     &
                     # at least 3 of the last 4 major heikin ashi candles are bullish
                     df[ha_upswing_col]
@@ -528,28 +590,37 @@ class FractalStrategy(IStrategy):
                     # enough energy (using pre-calculated conditions)
                     cond_ptf_chop
                     & cond_mtf_chop
-                )
-
-                # SHORT Entry Conditions
-                short_condition = (
-                    # signal: laguerre crosses below sell_laguerre_level
-                    (
-                        qtpylib.crossed_below(
-                            dataframe["laguerre"], self.sell_laguerre_level.value
-                        )
-                    )
-                    &
-                    # in cradle zone
-                    self.use_cradle_zone.value & df["in_cradle"] & (df["ema20"] < df["ema10"])
                     &
                     # confirmation: strong volume
                     df["strong_volume"]
                     &
-                    # ~df['above_ema20'] &
-                    df["below_support"]
+                    df["above_resistance"]
                     &
-                    # small candle condition
+                    # small candle condition (to make sure the price action is not too volatile)
                     df["small_candle"]
+                    &
+                    # RR ratio condition
+                    long_rr_cond
+                )
+
+                # SHORT Entry Conditions
+                short_rr_cond = (df["short_rr_ratio"] >= self.rr_ratio.value) if self.use_rr_ratio.value else True
+                short_trigger_condition = (
+                    (self.trigger_type.value == "lrsi")
+                    & qtpylib.crossed_below(
+                        df["laguerre"], self.sell_laguerre_level.value
+                    )
+                ) if self.trigger_type.value == "lrsi" else (
+                    (self.trigger_type.value == "breakout")
+                    & (df["close"] < df[f"donchian_lower_{self.major_timeframe}"])
+                    & (
+                        (df.shift(-1)["close"] < (df.shift(-1)["high"] - 0.7 * (df.shift(-1)["high"] - df.shift(-1)["low"])))
+                    )
+                )
+
+                short_condition = (
+                    # signal: laguerre crosses below sell_laguerre_level
+                    short_trigger_condition
                     &
                     # at least 3 of the last 4 major heikin ashi candles are bearish
                     df[ha_downswing_col]
@@ -557,6 +628,17 @@ class FractalStrategy(IStrategy):
                     # enough energy
                     cond_ptf_chop
                     & cond_mtf_chop
+                    &
+                    # confirmation: strong volume
+                    df["strong_volume"]
+                    &
+                    df["below_support"]
+                    &
+                    # small candle condition
+                    df["small_candle"]
+                    &
+                    # RR ratio condition
+                    short_rr_cond
                 )
 
                 # Apply conditions with position sizing
@@ -620,6 +702,8 @@ class FractalStrategy(IStrategy):
                 ll_col = f"lower_low_{self.primary_timeframe}"
                 trough_col = f"trough_{self.primary_timeframe}"
                 peak_col = f"peak_{self.primary_timeframe}"
+                upper_tp_zone_col = f"donchian_upper_{self.major_timeframe}"
+                lower_tp_zone_col = f"donchian_lower_{self.major_timeframe}"
 
                 if not all(
                     col in df.columns for col in [hh_col, ll_col, trough_col, peak_col]
@@ -632,9 +716,13 @@ class FractalStrategy(IStrategy):
                 # Exit LONG positions
                 exit_long_price_condition = df["close"] < df[trough_col]
                 exit_long_trend_condition = df[ll_col].astype(bool)
+                exit_tp_zone_condition = (
+                    df["close"] > df[upper_tp_zone_col]
+                )
 
                 exit_long_condition = (
                     exit_long_price_condition | exit_long_trend_condition
+                    | (self.use_take_profit.value and exit_tp_zone_condition)
                 )
 
                 # Exit SHORT positions
@@ -643,6 +731,7 @@ class FractalStrategy(IStrategy):
 
                 exit_short_condition = (
                     exit_short_price_condition | exit_short_trend_condition
+                    | (self.use_take_profit.value and exit_tp_zone_condition)
                 )
 
                 # Set exit reason based on which condition triggered the exit
@@ -651,6 +740,8 @@ class FractalStrategy(IStrategy):
                     reason = "price"
                 elif exit_long_trend_condition.any():
                     reason = "trend"
+                elif self.use_take_profit.value and exit_tp_zone_condition.any():
+                    reason = "take_profit"
                 else:
                     reason = "unknown"
 
@@ -663,6 +754,8 @@ class FractalStrategy(IStrategy):
                         reason = "price"
                     elif exit_short_trend_condition.any():
                         reason = "trend"
+                    elif self.use_take_profit.value and exit_tp_zone_condition.any():
+                        reason = "take_profit"
                     else:
                         reason = "unknown"
 
@@ -1004,6 +1097,11 @@ class FractalStrategy(IStrategy):
             stop_loss_price = raw_stop_price * 0.998
             price_diff_to_stop = trade.open_rate - stop_loss_price
             take_profit_price = trade.open_rate + price_diff_to_stop
+            take_profit_2_price = last_candle.get(
+                f"donchian_upper_{self.major_timeframe}"
+            )
+            if take_profit_2_price <= take_profit_price:
+                take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
         elif side == "short":
             raw_stop_price = last_candle.get(
                 f"peak_{self.primary_timeframe}"
@@ -1011,13 +1109,22 @@ class FractalStrategy(IStrategy):
             stop_loss_price = raw_stop_price * 1.002
             price_diff_to_stop = stop_loss_price - trade.open_rate
             take_profit_price = trade.open_rate - price_diff_to_stop
+            take_profit_2_price = last_candle.get(
+                f"donchian_lower_{self.major_timeframe}"
+            )
+            if take_profit_2_price >= take_profit_price:
+                take_profit_2_price = trade.open_rate - 2 * price_diff_to_stop
         else:
             logger.error(f"Order Filled: Invalid side '{side}' received.")
             return None  # Should not happen
 
         # Log the take profit price being set
-        logger.info(f"Setting take_profit_price={take_profit_price} for {pair}")
+        logger.info(f"Setting take_profit_price={take_profit_price} for {pair}, "
+                    f"tp2={take_profit_2_price}")
         trade.set_custom_data(key="take_profit_price", value=take_profit_price)
+        trade.set_custom_data(
+            key="take_profit_2_price", value=take_profit_2_price
+        )
 
         return None
 
@@ -1053,8 +1160,14 @@ class FractalStrategy(IStrategy):
             return
 
         take_profit_price = trade.get_custom_data(key="take_profit_price")
+        take_profit_2_price = trade.get_custom_data(
+            key="take_profit_2_price", default=None
+        )
         take_profit_reduced = trade.get_custom_data(
             key="take_profit_reduced", default=False
+        )
+        take_profit_2_reduced = trade.get_custom_data(
+            key="take_profit_2_reduced", default=False
         )
 
         # Check if we've reached take profit price and haven't reduced position yet
@@ -1082,6 +1195,47 @@ class FractalStrategy(IStrategy):
             # To exit 50% of position: 0.5 * trade.amount = abs(stake_amount) * trade.amount / trade.stake_amount
             # Solving: stake_amount = -0.5 * trade.stake_amount (negative for reduction)
             reduction_stake_amount = -0.5 * trade.stake_amount
+
+            # Calculate expected amount to be exited for validation
+            expected_exit_amount = (
+                abs(reduction_stake_amount) * trade.amount / trade.stake_amount
+            )
+            expected_exit_percentage = (expected_exit_amount / trade.amount) * 100
+
+            logger.debug(f"Position reduction calculation for {trade.pair}:")
+            logger.debug(
+                f"  Current position: {trade.amount:.8f} {trade.base_currency}"
+            )
+            logger.debug(
+                f"  Current stake: {trade.stake_amount:.6f} {trade.stake_currency}"
+            )
+            logger.debug(f"  Reduction stake amount: {reduction_stake_amount:.6f}")
+            logger.debug(
+                f"  Expected exit amount: {expected_exit_amount:.8f} ({expected_exit_percentage:.1f}%)"
+            )
+
+            return reduction_stake_amount
+
+        take_profit_2_reached = False
+        if take_profit_2_price is not None and not take_profit_2_reduced:
+            if not trade.is_short:
+                take_profit_2_reached = current_rate >= take_profit_2_price
+            else:
+                take_profit_2_reached = current_rate <= take_profit_2_price
+
+        if take_profit_2_reached:
+            # Mark that we've reduced the position at take profit 2
+            trade.set_custom_data(key="take_profit_2_reduced", value=True)
+
+            side_text = "short" if trade.is_short else "long"
+            logger.info(
+                f"Take profit 2 reached for {trade.pair} ({side_text}) at {current_rate:.6f} "
+                f"(target: {take_profit_2_price:.6f}). Reducing position by 30% of original stake."
+            )
+
+            # To reduce by 30% of the original stake, we must reduce by 60% of the
+            # remaining stake (since 50% was already sold).
+            reduction_stake_amount = -0.6 * trade.stake_amount
 
             # Calculate expected amount to be exited for validation
             expected_exit_amount = (
@@ -1131,6 +1285,8 @@ class FractalStrategy(IStrategy):
         # Check if we have the required columns
         peak_col = f"peak_{self.primary_timeframe}"
         trough_col = f"trough_{self.primary_timeframe}"
+        upper_col = f"donchian_upper_{self.major_timeframe}"
+        lower_col = f"donchian_lower_{self.major_timeframe}"
 
         if peak_col not in dataframe.columns or trough_col not in dataframe.columns:
             logger.warning(
@@ -1185,10 +1341,18 @@ class FractalStrategy(IStrategy):
             range_type = None
 
             # Classify based on overall market structure direction
-            if (prev_point.get(f"ha_upswing_{self.major_timeframe}")):
+            upswing_val = prev_point.get(f"ha_upswing_{self.major_timeframe}")
+            downswing_val = prev_point.get(f"ha_downswing_{self.major_timeframe}")
+            if upswing_val:
                 range_type = "bullish"
-            elif (prev_point.get(f"ha_downswing_{self.major_timeframe}")):
+                val = prev_point.get(upper_col)
+                if val is not None:
+                    prev_peak = val
+            elif downswing_val:
                 range_type = "bearish"
+                val = prev_point.get(lower_col)
+                if val is not None:
+                    prev_trough = val
             else:
                 # Fallback for edge cases
                 range_type = "neutral"
