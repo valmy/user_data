@@ -111,7 +111,8 @@ class FractalStrategy(IStrategy):
     ratio_major_to_signal = major_timeframe_minutes / signal_timeframe_minutes
 
     # Number of candles the strategy requires before producing valid signals
-    startup_candle_count: int = max(50, 3 * ratio_major_to_signal)
+    # Ensure it's an integer using int() and max() to prevent float values
+    startup_candle_count: int = int(max(50, 3 * ratio_major_to_signal))
 
     # Trigger type
     trigger_type = CategoricalParameter(
@@ -125,7 +126,7 @@ class FractalStrategy(IStrategy):
 
     # Laguerre RSI parameters
     laguerre_gamma = DecimalParameter(
-        0.6, 0.8, default=0.68, decimals=2, space="buy", load=True, optimize=True
+        0.6, 0.8, default=0.68, decimals=2, space="buy", load=True, optimize=False
     )
     small_candle_ratio = DecimalParameter(
         1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=True
@@ -438,17 +439,22 @@ class FractalStrategy(IStrategy):
         )
 
         # Donchian Channels (using 36-period window)
-        major_period: int = int(3 * self.ratio_major_to_signal)
-        primary_period: int = int(3 * self.ratio_primary_to_signal)
+        major_period = round(3 * self.ratio_major_to_signal)
+        primary_period = round(3 * self.ratio_primary_to_signal)
+
+        # Debug logging
+        logger.debug(f"Calculated periods - major: {major_period}, primary: {primary_period}")
+
+        # Calculate rolling windows with integer periods
         dataframe["donchian_upper"] = (
-            dataframe["high"].rolling(window=major_period).max()
+            dataframe["high"].rolling(window=major_period, min_periods=1).max()
         )
         dataframe["donchian_lower"] = (
-            dataframe["low"].rolling(window=major_period).min()
+            dataframe["low"].rolling(window=major_period, min_periods=1).min()
         )
 
-        dataframe["stop_upper"] = dataframe["high"].rolling(window=primary_period).max()
-        dataframe["stop_lower"] = dataframe["low"].rolling(window=primary_period).min()
+        dataframe["stop_upper"] = dataframe["high"].rolling(window=primary_period, min_periods=1).max()
+        dataframe["stop_lower"] = dataframe["low"].rolling(window=primary_period, min_periods=1).min()
 
         return dataframe
 
@@ -712,8 +718,6 @@ class FractalStrategy(IStrategy):
                 ll_col = f"lower_low_{self.primary_timeframe}"
                 trough_col = f"trough_{self.primary_timeframe}"
                 peak_col = f"peak_{self.primary_timeframe}"
-                upper_tp_zone_col = f"donchian_upper_{self.major_timeframe}"
-                lower_tp_zone_col = f"donchian_lower_{self.major_timeframe}"
 
                 if not all(
                     col in df.columns for col in [hh_col, ll_col, trough_col, peak_col]

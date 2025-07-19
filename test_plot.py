@@ -45,7 +45,7 @@ data_location = config["datadir"]
 
 # Date range configuration
 date_range_days = 1  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
-overall_start = "2025-06-01"
+overall_start = "2025-07-01"
 overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=timezone.utc).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")

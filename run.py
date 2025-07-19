@@ -48,8 +48,8 @@ config["strategy"] = "FractalStrategy"
 data_location = config["datadir"]
 
 # Date range configuration
-date_range_days = 1  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
-overall_start = "2025-07-01"
+date_range_days = 0  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
+overall_start = "2025-07-12"
 overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=UTC).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
@@ -321,6 +321,7 @@ for start_date, end_date in date_ranges:
         # Define timeframes for easier reference
         primary_timeframe = strategy.primary_timeframe
         major_timeframe = strategy.major_timeframe
+        atr_stop_ratio = strategy.atr_stop_ratio.value
 
         # Add Primary Peak line (from primary timeframe)
         primary_peak_col = f'peak_{primary_timeframe}'
@@ -357,7 +358,7 @@ for start_date, end_date in date_ranges:
             if not hh_data.empty:
                 fig.add_trace(go.Scatter(
                     x=hh_data.date,
-                    y=hh_data['low'] - 2 * hh_data['atr'],
+                    y=hh_data['close'] - (atr_stop_ratio * hh_data['atr']),
                     mode='markers',
                     name=f'Up Swing ({major_timeframe})',
                     marker=dict(symbol='triangle-up', color=px.colors.qualitative.Pastel[4]),
@@ -377,7 +378,7 @@ for start_date, end_date in date_ranges:
             if not ll_data.empty:
                 fig.add_trace(go.Scatter(
                     x=ll_data.date,
-                    y=ll_data['high'] + 2 * ll_data['atr'],
+                    y=ll_data['close'] + (atr_stop_ratio * ll_data['atr']),
                     mode='markers',
                     name=f'Down Swing ({major_timeframe})',
                     marker=dict(symbol='triangle-down', color=px.colors.qualitative.Pastel[5]),
@@ -431,7 +432,7 @@ for start_date, end_date in date_ranges:
                 line=dict(color='yellow', width=1)
             ), row=3, col=1)
 
-        fig.add_hline(y=strategy.major_chop_threshold.value, line_dash="dash", row=3, col=1,
+        fig.add_hline(y=strategy.primary_chop_threshold.value, line_dash="dash", row=3, col=1,
                     annotation_text="Minimal Threshold",
                     annotation_position="bottom right",
                     line_color="rgba(200, 200, 200, 0.5)")
