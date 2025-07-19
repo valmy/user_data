@@ -34,18 +34,18 @@ print(Path.cwd())
 
 # Initialize empty configuration object
 # config = Configuration.from_files([])
-config = Configuration.from_files(["user_data/config.json"])
+config = Configuration.from_files(["user_data/config-backtest.json"])
 
 # Define some constants
-config["timeframe"] = "5m"
+# config["timeframe"] = "5m"
 # Name of the strategy class
-config["strategy"] = "FractalStrategy"
+# config["strategy"] = "FractalStrategy"
 # Location of the data
 data_location = config["datadir"]
 
 # Date range configuration
 date_range_days = 1  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
-overall_start = "2025-07-01"
+overall_start = "2025-06-01"
 overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=timezone.utc).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
@@ -125,5 +125,12 @@ annotations = loaded_strategy.plot_annotations(
 
 pprint.pprint(annotations)
 
-# print(all_trades.keys())
-# print(all_trades.loc[:, ['close_date', 'pair', 'profit_abs', 'stop_loss_abs']])
+import json
+from pandas import json_normalize
+
+# Convert the DataFrame to a list of dictionaries
+trades_list = all_trades.to_dict('records')
+
+# Convert to pretty-printed JSON
+print("\nFull trades data in JSON format:")
+print(json.dumps(trades_list, indent=2, default=str))

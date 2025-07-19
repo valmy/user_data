@@ -164,8 +164,6 @@ class FractalStrategy(IStrategy):
         0.05, 10.0, default=5.0, decimals=1, space="sell", load=True, optimize=True
     )
 
-    use_take_profit = BooleanParameter(default=True, space="sell", optimize=True)
-
     _force_leverage_one_for_this_trade: bool = False
 
     def is_hyperopt_mode(self) -> bool:
@@ -541,7 +539,7 @@ class FractalStrategy(IStrategy):
                 # LONG Entry Conditions
                 long_rr_cond = (
                     (df["long_rr_ratio"] >= self.rr_ratio.value)
-                    if self.use_rr_ratio.value
+                    if self.use_rr_ratio.value and self.trigger_type.value != "breakout"
                     else True
                 )
 
@@ -626,7 +624,7 @@ class FractalStrategy(IStrategy):
                 # SHORT Entry Conditions
                 short_rr_cond = (
                     (df["short_rr_ratio"] >= self.rr_ratio.value)
-                    if self.use_rr_ratio.value
+                    if self.use_rr_ratio.value and self.trigger_type.value != 'breakout'
                     else True
                 )
 
@@ -721,64 +719,64 @@ class FractalStrategy(IStrategy):
                     col in df.columns for col in [hh_col, ll_col, trough_col, peak_col]
                 ):
                     logger.error(
-                        f"Exit condition columns missing! HH: {hh_col in df.columns}, LL: {ll_col in df.columns}, Trough: {trough_col in df.columns}, Peak: {peak_col in df.columns}. All columns: {df.columns.to_list()}"
+                        f"Exit condition columns missing! HH: {hh_col in df.columns}, "
+                        f"LL: {ll_col in df.columns}, Trough: {trough_col in df.columns}, "
+                        f"Peak: {peak_col in df.columns}. All columns: {df.columns.to_list()}"
                     )
                     return df  # Return df with no exits
 
                 # Exit LONG positions
                 exit_long_price_condition = df["close"] < df[trough_col]
                 exit_long_trend_condition = df[ll_col].astype(bool)
-                exit_long_tp_zone_condition = (
-                    df["close"] > df[upper_tp_zone_col]
-                )
 
                 exit_long_condition = (
                     exit_long_price_condition | exit_long_trend_condition
-                    | (self.use_take_profit.value and exit_long_tp_zone_condition)
                 )
 
                 # Exit SHORT positions
                 exit_short_price_condition = df["close"] > df[peak_col]
                 exit_short_trend_condition = df[hh_col].astype(bool)
-                exit_short_tp_zone_condition = df["close"] < df[lower_tp_zone_col]
 
                 exit_short_condition = (
                     exit_short_price_condition | exit_short_trend_condition
-                    | (self.use_take_profit.value and exit_short_tp_zone_condition)
                 )
 
-                # Set exit reason based on which condition triggered the exit
-                reason = ""
-                if exit_long_trend_condition.any():
-                    reason = "trend"
-                elif self.use_take_profit.value and exit_short_tp_zone_condition.any():
-                    reason = "take_profit"
-                elif exit_long_price_condition.any():
-                    reason = "price"
-                else:
-                    reason = "unknown"
+                # Initialize exit reason column with 'unknown'
+                df['exit_reason'] = 'unknown'
 
-                # Apply exit conditions and set exit reason
-                df.loc[exit_long_condition, ["exit_long", "exit_tag"]] = (
-                    1,
-                    reason
-                )
+                # Set exit reasons for long positions with priority order
+                # Priority 1: Trend condition
+                long_trend_mask = exit_long_condition & exit_long_trend_condition
+                df.loc[long_trend_mask, 'exit_reason'] = 'trend'
+
+                # Priority 2: Price condition
+                long_price_mask = (exit_long_condition &
+                                 (df['exit_reason'] == 'unknown') &
+                                 exit_long_price_condition)
+                df.loc[long_price_mask, 'exit_reason'] = 'price'
+
+                # Apply long exit conditions
+                df.loc[exit_long_condition, 'exit_long'] = 1
+                df.loc[exit_long_condition, 'exit_tag'] = df.loc[exit_long_condition, 'exit_reason']
 
                 if self.can_short:
-                    reason = ""
-                    if exit_short_trend_condition.any():
-                        reason = "trend"
-                    elif self.use_take_profit.value and exit_short_tp_zone_condition.any():
-                        reason = "take_profit"
-                    elif exit_short_price_condition.any():
-                        reason = "price"
-                    else:
-                        reason = "unknown"
+                    # Reset exit reason for short positions
+                    df['exit_reason'] = 'unknown'
 
-                    df.loc[exit_short_condition, ["exit_short", "exit_tag"]] = (
-                        1,
-                        reason
-                    )
+                    # Set exit reasons for short positions with priority order
+                    # Priority 1: Trend condition
+                    short_trend_mask = exit_short_condition & exit_short_trend_condition
+                    df.loc[short_trend_mask, 'exit_reason'] = 'trend'
+
+                    # Priority 2: Price condition
+                    short_price_mask = (exit_short_condition &
+                                      (df['exit_reason'] == 'unknown') &
+                                      exit_short_price_condition)
+                    df.loc[short_price_mask, 'exit_reason'] = 'price'
+
+                    # Apply short exit conditions
+                    df.loc[exit_short_condition, 'exit_short'] = 1
+                    df.loc[exit_short_condition, 'exit_tag'] = df.loc[exit_short_condition, 'exit_reason']
 
                 return df
             except Exception as e_inner:
@@ -786,7 +784,9 @@ class FractalStrategy(IStrategy):
                     f"Error in exit trend condition calculation for {metadata['pair']}: "
                     f"{str(e_inner)}\n{traceback.format_exc()}"
                 )
-                # df['exit_long'] = 0 and df['exit_short'] = 0 are already set
+                # Return dataframe with no exits if there's an error
+                df['exit_long'] = 0
+                df['exit_short'] = 0
                 return df
 
         except Exception as e:

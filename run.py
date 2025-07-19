@@ -1,17 +1,20 @@
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
+import plotly.graph_objects as go
+from strategies.FractalStrategy import FractalStrategy
+
 from freqtrade.configuration import Configuration
 from freqtrade.data.btanalysis import load_backtest_data, load_backtest_stats
+from freqtrade.data.dataprovider import DataProvider
 from freqtrade.data.history import load_pair_history
 from freqtrade.enums import CandleType
-from freqtrade.data.dataprovider import DataProvider
-from freqtrade.resolvers import StrategyResolver
 from freqtrade.exchange.binance import Binance
-from strategies.FractalStrategy import FractalStrategy
-from datetime import datetime, timedelta, timezone
+from freqtrade.resolvers import StrategyResolver
+
 
 # Change directory
 # Modify this cell to insure that the output shows the correct path.
@@ -35,7 +38,7 @@ print(Path.cwd())
 
 # Initialize empty configuration object
 # config = Configuration.from_files([])
-config = Configuration.from_files(["user_data/config.json"])
+config = Configuration.from_files(["user_data/config-backtest.json"])
 
 # Define some constants
 config["timeframe"] = "5m"
@@ -47,7 +50,7 @@ data_location = config["datadir"]
 # Date range configuration
 date_range_days = 1  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
 overall_start = "2025-07-01"
-overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=timezone.utc).strftime("%Y-%m-%d")
+overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=UTC).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
 end_date_dt = datetime.strptime(overall_end, "%Y-%m-%d")
@@ -65,7 +68,7 @@ base_currency = "USDT" # Assuming USDT as the common quote and stake currency
 stake_currency = "USDT"
 
 # pairs_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'SUI', 'TRX', 'LINK']
-pairs_symbols = ['ETH', 'BNB', 'SUI', 'BTC', 'TRX', 'SOL', 'DOGE']
+pairs_symbols = ['ETH', 'BNB', 'SUI', 'BTC', 'TRX', 'SOL', 'DOGE', 'LINK', 'XRP', '1000PEPE', 'ADA', 'BCH' ]
 
 exchange = Binance(config) # Assuming Binance, adjust if necessary
 
@@ -106,12 +109,10 @@ loaded_strategy = StrategyResolver.load_strategy(config)
 loaded_strategy.dp = DataProvider(config, exchange, None)
 loaded_strategy.ft_bot_start()
 
-from freqtrade.plot.plotting import generate_candlestick_graph
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import plotly.express as px
 from datetime import datetime, timedelta
-import pandas as pd
+
+from plotly.subplots import make_subplots
+
 
 for start_date, end_date in date_ranges:
     for pair_symbol in pairs_symbols:

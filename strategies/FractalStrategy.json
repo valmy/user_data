@@ -20,7 +20,7 @@
       "max_risk_per_trade": 0.02,
       "primary_chop_threshold": 45,
       "laguerre_gamma": 0.67,
-      "rr_ratio": 3.1,
+      "rr_ratio": 1.6,
       "small_candle_ratio": 3.7,
       "trigger_type": "lrsi",
       "use_rr_ratio": true,
@@ -29,8 +29,7 @@
     "sell": {
       "sell_laguerre_level": 0.8,
       "atr_stop_ratio": 4.3,
-      "trailing_stop_ratio": 0.14,
-      "use_take_profit": false
+      "trailing_stop_ratio": 0.14
     },
     "protection": {}
   },
