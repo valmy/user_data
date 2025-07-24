@@ -64,6 +64,7 @@ class FractalStrategy(IStrategy):
     timeframe = "5m"  # Renamed from signal_timeframe
     primary_timeframe = "15m"  # This can remain for your internal logic if needed
     major_timeframe = "1h"
+    long_timeframe = "4h"
 
     # Can this strategy go short?
     can_short: bool = True
@@ -95,6 +96,7 @@ class FractalStrategy(IStrategy):
     signal_timeframe_minutes = timeframe_to_minutes(timeframe)
     primary_timeframe_minutes = timeframe_to_minutes(primary_timeframe)
     major_timeframe_minutes = timeframe_to_minutes(major_timeframe)
+    long_timeframe_minutes = timeframe_to_minutes(long_timeframe)
 
     # Calculate ratios
     if signal_timeframe_minutes == 0:
@@ -109,6 +111,11 @@ class FractalStrategy(IStrategy):
 
     # ratio major to signal
     ratio_major_to_signal = major_timeframe_minutes / signal_timeframe_minutes
+
+    if long_timeframe_minutes == 0:
+        ratio_long_to_signal = float("inf")  # Or handle as an error
+    else:
+        ratio_long_to_signal = long_timeframe_minutes / signal_timeframe_minutes
 
     # Number of candles the strategy requires before producing valid signals
     # Ensure it's an integer using int() and max() to prevent float values
@@ -202,7 +209,12 @@ class FractalStrategy(IStrategy):
         for pair in pairs:
             informative_pairs.append((pair, self.major_timeframe))
 
+        # Long timeframe for trend confirmation
+        for pair in pairs:
+            informative_pairs.append((pair, self.long_timeframe))
+
         return informative_pairs
+
 
     @informative(primary_timeframe)
     def populate_informative_primary(
@@ -394,6 +406,21 @@ class FractalStrategy(IStrategy):
 
         return dataframe
 
+    @informative(long_timeframe)
+    def populate_informative_long(
+        self, dataframe: DataFrame, metadata: dict
+    ) -> DataFrame:
+        """
+        Populate indicators for long trend confirmation on long_timeframe timeframe
+        """
+
+        # Choppiness Index
+        dataframe["chop"] = pta.chop(
+            dataframe["high"], dataframe["low"], dataframe["close"], length=14
+        )
+
+        return dataframe
+    
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
         Adds indicators for secondary trends and generates buy/sell signals
@@ -442,9 +469,6 @@ class FractalStrategy(IStrategy):
         major_period = round(3 * self.ratio_major_to_signal)
         primary_period = round(3 * self.ratio_primary_to_signal)
 
-        # Debug logging
-        logger.debug(f"Calculated periods - major: {major_period}, primary: {primary_period}")
-
         # Calculate rolling windows with integer periods
         dataframe["donchian_upper"] = (
             dataframe["high"].rolling(window=major_period, min_periods=1).max()
@@ -455,6 +479,20 @@ class FractalStrategy(IStrategy):
 
         dataframe["stop_upper"] = dataframe["high"].rolling(window=primary_period, min_periods=1).max()
         dataframe["stop_lower"] = dataframe["low"].rolling(window=primary_period, min_periods=1).min()
+
+        # long_target as the higher between donchian_upper and peak in major timeframe
+        dataframe["long_target"] = dataframe[["donchian_upper", f"peak_{self.major_timeframe}"]].max(axis=1)
+        # short_target as the lower between donchian_lower and trough in major timeframe
+        dataframe["short_target"] = dataframe[["donchian_lower", f"trough_{self.major_timeframe}"]].min(axis=1)
+
+        # long stop as the lower between stop_lower, trough in primary timeframe,
+        # and low - atr
+        dataframe["low_minus_atr"] = dataframe["low"] - dataframe["atr"]
+        dataframe["long_stop"] = dataframe[["stop_lower", f"trough_{self.primary_timeframe}", "low_minus_atr"]].min(axis=1)
+        # short stop as the higher between stop_upper, peak in primary timeframe,
+        # and high + atr
+        dataframe["high_plus_atr"] = dataframe["high"] + dataframe["atr"]
+        dataframe["short_stop"] = dataframe[["stop_upper", f"peak_{self.primary_timeframe}", "high_plus_atr"]].max(axis=1)
 
         return dataframe
 
@@ -530,6 +568,10 @@ class FractalStrategy(IStrategy):
                     df["high"].rolling(window=back_range).max()
                     <= df[f"peak_{self.primary_timeframe}"]
                 )
+
+                # Add low - atr requirement for long entries
+                df["low_minus_atr"] = df["low"] - df["atr"]
+                df["close_above_low_minus_atr"] = df["close"] > df["low_minus_atr"]
 
                 # RR ratio calculation, consider the donchian_upper in major timeframe as the target
                 # and trough in primary timeframe as the stop loss
@@ -618,13 +660,16 @@ class FractalStrategy(IStrategy):
                     # confirmation: strong volume
                     df["strong_volume"]
                     &
-                    df["above_resistance"]
-                    &
+                    # df["above_resistance"]
+                    # &
                     # small candle condition (to make sure the price action is not too volatile)
                     df["small_candle"]
                     &
                     # RR ratio condition
                     long_rr_cond
+                    &
+                    # New: close must be above (low - atr)
+                    df["close_above_low_minus_atr"]
                 )
 
                 # SHORT Entry Conditions
@@ -647,8 +692,8 @@ class FractalStrategy(IStrategy):
                     &
                     # confirmation: strong volume
                     df["strong_volume"]
-                    &
-                    df["below_support"]
+                    # &
+                    # df["below_support"]
                     &
                     # small candle condition
                     df["small_candle"]
@@ -716,21 +761,21 @@ class FractalStrategy(IStrategy):
             try:
                 hh_col = f"higher_high_{self.primary_timeframe}"
                 ll_col = f"lower_low_{self.primary_timeframe}"
-                trough_col = f"trough_{self.primary_timeframe}"
-                peak_col = f"peak_{self.primary_timeframe}"
+                long_stop_col = "long_stop"
+                short_stop_col = "short_stop"
 
                 if not all(
-                    col in df.columns for col in [hh_col, ll_col, trough_col, peak_col]
+                    col in df.columns for col in [hh_col, ll_col, long_stop_col, short_stop_col]
                 ):
                     logger.error(
                         f"Exit condition columns missing! HH: {hh_col in df.columns}, "
-                        f"LL: {ll_col in df.columns}, Trough: {trough_col in df.columns}, "
-                        f"Peak: {peak_col in df.columns}. All columns: {df.columns.to_list()}"
+                        f"LL: {ll_col in df.columns}, Long stop: {long_stop_col in df.columns}, "
+                        f"Short stop: {short_stop_col in df.columns}. All columns: {df.columns.to_list()}"
                     )
                     return df  # Return df with no exits
 
                 # Exit LONG positions
-                exit_long_price_condition = df["close"] < df[trough_col]
+                exit_long_price_condition = df["close"] < df[long_stop_col]
                 exit_long_trend_condition = df[ll_col].astype(bool)
 
                 exit_long_condition = (
@@ -738,7 +783,7 @@ class FractalStrategy(IStrategy):
                 )
 
                 # Exit SHORT positions
-                exit_short_price_condition = df["close"] > df[peak_col]
+                exit_short_price_condition = df["close"] > df[short_stop_col]
                 exit_short_trend_condition = df[hh_col].astype(bool)
 
                 exit_short_condition = (
@@ -835,13 +880,9 @@ class FractalStrategy(IStrategy):
             if after_fill and not take_profit_reduced:
                 # If after fill and take profit not reduced, set stop loss to 0.2% below trough
                 if not trade.is_short:
-                    stop_loss_price = last_candle.get(
-                        f"trough_{self.primary_timeframe}", 0
-                    ) * 0.998
+                    stop_loss_price = last_candle.get("long_stop", 0) * 0.998
                 else:
-                    stop_loss_price = last_candle.get(
-                        f"peak_{self.primary_timeframe}", float("inf")
-                    ) * 1.002
+                    stop_loss_price = last_candle.get("short_stop", float("inf")) * 1.002
 
             else:
                 trailing_atr = self.atr_stop_ratio.value * last_candle['atr']
@@ -850,9 +891,7 @@ class FractalStrategy(IStrategy):
                 if not trade.is_short:
                     atr_stop_price = last_candle["close"] - trailing_atr
                     # Use the more conservative stop (higher for long)
-                    stop_loss_price = last_candle.get(
-                        f"trough_{self.primary_timeframe}", 0
-                    ) * (1 - self.trailing_stop_ratio.value)
+                    stop_loss_price = last_candle.get("long_stop", 0) * (1 - self.trailing_stop_ratio.value)
 
                     higher_stop = max(atr_stop_price, stop_loss_price)
 
@@ -864,9 +903,7 @@ class FractalStrategy(IStrategy):
                 else:
                     atr_stop_price = last_candle["close"] + trailing_atr
                     # Use the more conservative stop (lower for short)
-                    stop_loss_price = last_candle.get(
-                        f"peak_{self.primary_timeframe}", float("inf")
-                    ) * (1 + self.trailing_stop_ratio.value)
+                    stop_loss_price = last_candle.get("short_stop", float("inf")) * (1 + self.trailing_stop_ratio.value)
 
                     lower_stop = min(atr_stop_price, stop_loss_price)
                     # Ensure stop is not too tight (at least 0.1% above entry)
@@ -1024,12 +1061,10 @@ class FractalStrategy(IStrategy):
         price_diff_to_stop = 0.0
 
         if side == "long":
-            raw_stop_price = last_candle.get(
-                f"trough_{self.primary_timeframe}"
-            )  # From primary informative
+            raw_stop_price = last_candle.get("long_stop")
             if pd.isna(raw_stop_price):
                 logger.warning(
-                    f"Leverage: trough_{self.primary_timeframe} is NaN for {pair} on {current_time}."
+                    f"Leverage: long_stop is NaN for {pair} on {current_time}."
                 )
                 return 0.0  # Stop-loss level not found or NaN
             stop_loss_price = raw_stop_price * 0.998
@@ -1037,12 +1072,10 @@ class FractalStrategy(IStrategy):
                 return 0.0  # Invalid stop-loss for long
             price_diff_to_stop = current_rate - stop_loss_price
         elif side == "short":
-            raw_stop_price = last_candle.get(
-                f"peak_{self.primary_timeframe}"
-            )  # From primary informative
+            raw_stop_price = last_candle.get("short_stop")
             if pd.isna(raw_stop_price):
                 logger.warning(
-                    f"Leverage: peak_{self.primary_timeframe} is NaN for {pair} on {current_time}."
+                    f"Leverage: short_stop is NaN for {pair} on {current_time}."
                 )
                 return 0.0  # Stop-loss level not found or NaN
             stop_loss_price = raw_stop_price * 1.002
@@ -1124,27 +1157,19 @@ class FractalStrategy(IStrategy):
         side = "long" if not trade.is_short else "short"
 
         if side == "long":
-            raw_stop_price = last_candle.get(
-                f"trough_{self.primary_timeframe}"
-            )  # From primary informative
+            raw_stop_price = last_candle.get("long_stop")
             stop_loss_price = raw_stop_price * 0.998
             price_diff_to_stop = trade.open_rate - stop_loss_price
             take_profit_price = trade.open_rate + price_diff_to_stop
-            take_profit_2_price = last_candle.get(
-                f"donchian_upper_{self.major_timeframe}"
-            )
+            take_profit_2_price = last_candle.get("long_target")
             if take_profit_2_price <= take_profit_price:
                 take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
         elif side == "short":
-            raw_stop_price = last_candle.get(
-                f"peak_{self.primary_timeframe}"
-            )  # From primary informative
+            raw_stop_price = last_candle.get("short_stop")
             stop_loss_price = raw_stop_price * 1.002
             price_diff_to_stop = stop_loss_price - trade.open_rate
             take_profit_price = trade.open_rate - price_diff_to_stop
-            take_profit_2_price = last_candle.get(
-                f"donchian_lower_{self.major_timeframe}"
-            )
+            take_profit_2_price = last_candle.get("short_target")
             if take_profit_2_price >= take_profit_price:
                 take_profit_2_price = trade.open_rate - 2 * price_diff_to_stop
         else:
