@@ -883,11 +883,11 @@ class FractalStrategy(IStrategy):
                         # )
                         return False  # Prevent exit
                     # else:
-                        # logger.info(
-                        #     f"Allowing exit for {pair} (short) - "
-                        #     f"Close ({last_candle['close']:.6f}) > "
-                        #     f"Dynamic Stop ({dynamic_stop:.6f})"
-                        # )
+                    #     logger.info(
+                    #         f"Allowing exit for {pair} (short) - "
+                    #         f"Close ({last_candle['close']:.6f}) > "
+                    #         f"Dynamic Stop ({dynamic_stop:.6f})"
+                    #     )
                 else:
                     # Check against initial stop loss
                     if last_candle["close"] <= initial_stop:
@@ -938,7 +938,7 @@ class FractalStrategy(IStrategy):
             # Get the last candle
             last_candle = dataframe.iloc[-1].squeeze()
 
-            # print(
+            # logger.debug(
             #     f"OHLC for {pair} at {current_time.strftime('%Y-%m-%d %H:%M')}: "
             #     f"O: {last_candle['open']:.6f}, H: {last_candle['high']:.6f}, "
             #     f"L: {last_candle['low']:.6f}, C: {last_candle['close']:.6f}, "
@@ -1002,12 +1002,13 @@ class FractalStrategy(IStrategy):
                         #     f"{current_time.strftime('%Y-%m-%d %H:%M')} Enabling dynamic stop for {pair} ({'short' if trade.is_short else 'long'}): "
                         #     f"Profit: {current_profit:.2%}, "
                         #     f"Trough changed: {trough_changed}, Peak changed: {peak_changed}"
+                        #     f"Price increased: {price_increased}, Price decreased: {price_decreased}"
                         # )
 
                 # For long positions
                 if not trade.is_short:
                     # Get the current trough value on primary timeframe
-                    current_trough = last_candle.get(f"trough_{self.primary_timeframe}", 0) * 0.995
+                    current_trough = last_candle.get(f"trough_{self.primary_timeframe}", 0)
 
                     # Debug logging for current values
                     # logger.debug(
@@ -1032,7 +1033,7 @@ class FractalStrategy(IStrategy):
                     if use_dynamic_stop and dynamic_stop is not None:
                         # Use dynamic stop with ATR buffer
                         atr_stop_price = last_candle["close"] - trailing_atr
-                        stop_loss_price = max(dynamic_stop, atr_stop_price)
+                        stop_loss_price = max(dynamic_stop * 0.995, atr_stop_price)
 
                         # Debug logging for final stop calculation
                         # logger.debug(
@@ -1046,7 +1047,7 @@ class FractalStrategy(IStrategy):
                 # For short positions
                 else:
                     # Get the current peak value on primary timeframe
-                    current_peak = last_candle.get(f"peak_{self.primary_timeframe}", float("inf")) * 1.005
+                    current_peak = last_candle.get(f"peak_{self.primary_timeframe}", float("inf"))
 
                     # Debug logging for current values
                     # logger.debug(
@@ -1071,7 +1072,7 @@ class FractalStrategy(IStrategy):
                     if use_dynamic_stop and dynamic_stop is not None:
                         # Use dynamic stop with ATR buffer
                         atr_stop_price = last_candle["close"] + trailing_atr
-                        stop_loss_price = min(dynamic_stop, atr_stop_price)
+                        stop_loss_price = min(dynamic_stop * 1.005, atr_stop_price)
 
                         # Debug logging for final stop calculation
                         # logger.debug(
