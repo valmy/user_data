@@ -14,18 +14,29 @@
       "XRP/USDT:USDT",
       "1000PEPE/USDT:USDT",
       "ADA/USDT:USDT",
-      "BCH/USDT:USDT"
+      "BCH/USDT:USDT",
+      "ENA/USDT:USDT",
+      "PENGU/USDT:USDT",
+      "FARTCOIN/USDT:USDT",
+      "CFX/USDT:USDT"
     ],
     "pair_blacklist": [
-      // "SUI/USDT:USDT",
-      // "TRX/USDT:USDT",
-      // "BTC/USDT:USDT",
+      // "ETH/USDT:USDT",
       // "BNB/USDT:USDT",
+      // "SUI/USDT:USDT",
+      // "BTC/USDT:USDT",
+      "TRX/USDT:USDT",
+      "SOL/USDT:USDT",
+      "DOGE/USDT:USDT",
       "LINK/USDT:USDT",
       "XRP/USDT:USDT",
       "1000PEPE/USDT:USDT",
       "ADA/USDT:USDT",
-      "BCH/USDT:USDT"
+      "BCH/USDT:USDT",
+      "ENA/USDT:USDT",
+      "PENGU/USDT:USDT",
+      "FARTCOIN/USDT:USDT",
+      "CFX/USDT:USDT"
     ]
   },
   "pairlists": [

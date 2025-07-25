@@ -123,7 +123,7 @@ class FractalStrategy(IStrategy):
 
     # Trigger type
     trigger_type = CategoricalParameter(
-        ["lrsi", "cradle", "breakout"], default="lrsi", space="buy", optimize=True
+        ["lrsi", "cradle", "breakout"], default="lrsi", space="buy", optimize=False
     )
 
     # Parameters for tuning
@@ -147,7 +147,7 @@ class FractalStrategy(IStrategy):
 
     # Choppiness Index parameters
     primary_chop_threshold = IntParameter(
-        35, 60, default=45, space="buy", load=False, optimize=False
+        35, 60, default=45, space="buy", load=True, optimize=True
     )
     major_chop_threshold = IntParameter(
         35, 50, default=40, space="buy", load=False, optimize=False
@@ -420,7 +420,7 @@ class FractalStrategy(IStrategy):
         )
 
         return dataframe
-    
+
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
         Adds indicators for secondary trends and generates buy/sell signals
@@ -486,13 +486,13 @@ class FractalStrategy(IStrategy):
         dataframe["short_target"] = dataframe[["donchian_lower", f"trough_{self.major_timeframe}"]].min(axis=1)
 
         # long stop as the lower between stop_lower, trough in primary timeframe,
-        # and low - atr
-        dataframe["low_minus_atr"] = dataframe["low"] - dataframe["atr"]
-        dataframe["long_stop"] = dataframe[["stop_lower", f"trough_{self.primary_timeframe}", "low_minus_atr"]].min(axis=1)
+        # and close - 2 * atr
+        dataframe["close_minus_2atr"] = dataframe["close"] - 2 * dataframe["atr"]
+        dataframe["long_stop"] = dataframe[["stop_lower", f"trough_{self.primary_timeframe}", "close_minus_2atr"]].min(axis=1)
         # short stop as the higher between stop_upper, peak in primary timeframe,
-        # and high + atr
-        dataframe["high_plus_atr"] = dataframe["high"] + dataframe["atr"]
-        dataframe["short_stop"] = dataframe[["stop_upper", f"peak_{self.primary_timeframe}", "high_plus_atr"]].max(axis=1)
+        # and close + 2 * atr
+        dataframe["close_plus_2atr"] = dataframe["close"] + 2 * dataframe["atr"]
+        dataframe["short_stop"] = dataframe[["stop_upper", f"peak_{self.primary_timeframe}", "close_plus_2atr"]].max(axis=1)
 
         return dataframe
 
@@ -569,9 +569,9 @@ class FractalStrategy(IStrategy):
                     <= df[f"peak_{self.primary_timeframe}"]
                 )
 
-                # Add low - atr requirement for long entries
-                df["low_minus_atr"] = df["low"] - df["atr"]
-                df["close_above_low_minus_atr"] = df["close"] > df["low_minus_atr"]
+                # Add close - 2 * atr requirement for long entries
+                df["close_minus_2atr"] = df["close"] - 2 * df["atr"]
+                df["close_above_close_minus_2atr"] = df["close"] > df["close_minus_2atr"]
 
                 # RR ratio calculation, consider the donchian_upper in major timeframe as the target
                 # and trough in primary timeframe as the stop loss
@@ -668,8 +668,8 @@ class FractalStrategy(IStrategy):
                     # RR ratio condition
                     long_rr_cond
                     &
-                    # New: close must be above (low - atr)
-                    df["close_above_low_minus_atr"]
+                    # New: close must be above (close - 2 * atr)
+                    df["close_above_close_minus_2atr"]
                 )
 
                 # SHORT Entry Conditions
@@ -748,7 +748,7 @@ class FractalStrategy(IStrategy):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Generate exit signals based on trend reversals, profit targets, and stop losses
+        Generate exit signals based on price conditions only
         """
         try:
             # Create a copy to avoid SettingWithCopyWarning
@@ -759,73 +759,28 @@ class FractalStrategy(IStrategy):
             df["exit_short"] = 0
 
             try:
-                hh_col = f"higher_high_{self.primary_timeframe}"
-                ll_col = f"lower_low_{self.primary_timeframe}"
-                long_stop_col = "long_stop"
-                short_stop_col = "short_stop"
+                long_stop_col = f"trough_{self.primary_timeframe}"
+                short_stop_col = f"peak_{self.primary_timeframe}"
 
                 if not all(
-                    col in df.columns for col in [hh_col, ll_col, long_stop_col, short_stop_col]
+                    col in df.columns for col in [long_stop_col, short_stop_col]
                 ):
                     logger.error(
-                        f"Exit condition columns missing! HH: {hh_col in df.columns}, "
-                        f"LL: {ll_col in df.columns}, Long stop: {long_stop_col in df.columns}, "
+                        f"Exit condition columns missing! "
+                        f"Long stop: {long_stop_col in df.columns}, "
                         f"Short stop: {short_stop_col in df.columns}. All columns: {df.columns.to_list()}"
                     )
                     return df  # Return df with no exits
 
-                # Exit LONG positions
-                exit_long_price_condition = df["close"] < df[long_stop_col]
-                exit_long_trend_condition = df[ll_col].astype(bool)
+                # Exit LONG positions based on price condition only
+                exit_long_condition = df["close"] < df[long_stop_col]
 
-                exit_long_condition = (
-                    exit_long_price_condition | exit_long_trend_condition
-                )
+                # Exit SHORT positions based on price condition only
+                exit_short_condition = df["close"] > df[short_stop_col]
 
-                # Exit SHORT positions
-                exit_short_price_condition = df["close"] > df[short_stop_col]
-                exit_short_trend_condition = df[hh_col].astype(bool)
-
-                exit_short_condition = (
-                    exit_short_price_condition | exit_short_trend_condition
-                )
-
-                # Initialize exit reason column with 'unknown'
-                df['exit_reason'] = 'unknown'
-
-                # Set exit reasons for long positions with priority order
-                # Priority 1: Trend condition
-                long_trend_mask = exit_long_condition & exit_long_trend_condition
-                df.loc[long_trend_mask, 'exit_reason'] = 'trend'
-
-                # Priority 2: Price condition
-                long_price_mask = (exit_long_condition &
-                                 (df['exit_reason'] == 'unknown') &
-                                 exit_long_price_condition)
-                df.loc[long_price_mask, 'exit_reason'] = 'price'
-
-                # Apply long exit conditions
+                # Apply exit conditions
                 df.loc[exit_long_condition, 'exit_long'] = 1
-                df.loc[exit_long_condition, 'exit_tag'] = df.loc[exit_long_condition, 'exit_reason']
-
-                if self.can_short:
-                    # Reset exit reason for short positions
-                    df['exit_reason'] = 'unknown'
-
-                    # Set exit reasons for short positions with priority order
-                    # Priority 1: Trend condition
-                    short_trend_mask = exit_short_condition & exit_short_trend_condition
-                    df.loc[short_trend_mask, 'exit_reason'] = 'trend'
-
-                    # Priority 2: Price condition
-                    short_price_mask = (exit_short_condition &
-                                      (df['exit_reason'] == 'unknown') &
-                                      exit_short_price_condition)
-                    df.loc[short_price_mask, 'exit_reason'] = 'price'
-
-                    # Apply short exit conditions
-                    df.loc[exit_short_condition, 'exit_short'] = 1
-                    df.loc[exit_short_condition, 'exit_tag'] = df.loc[exit_short_condition, 'exit_reason']
+                df.loc[exit_short_condition, 'exit_short'] = 1
 
                 return df
             except Exception as e_inner:
@@ -848,6 +803,95 @@ class FractalStrategy(IStrategy):
             dataframe["exit_short"] = 0
             return dataframe
 
+    def confirm_trade_exit(
+        self,
+        pair: str,
+        trade: Trade,
+        order_type: str,
+        amount: float,
+        rate: float,
+        time_in_force: str,
+        sell_reason: str,
+        **kwargs,
+    ) -> bool:
+        """
+        Called right before placing a regular sell order.
+        Timing: Called after populate_exit_trend and before the sell order is placed.
+
+        We use this to implement the same dynamic stop logic as a "soft stop" that
+        only triggers on candle close, rather than the "hard stop" that custom_stoploss
+        implements (which can be triggered by candle wicks).
+        """
+        try:
+            # Only apply this logic if the sell reason is 'exit_signal' (from populate_exit_trend)
+            if sell_reason != 'exit_signal':
+                return True  # Allow other types of exits (stoploss, roi, etc.)
+
+            # Get the dataframe
+            dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+            if len(dataframe) < 1:
+                return True  # Allow exit if no data
+
+            # Get the last candle
+            last_candle = dataframe.iloc[-1].squeeze()
+
+            # Get custom data from trade
+            use_dynamic_stop = trade.get_custom_data(key="use_dynamic_stop", default=False)
+            dynamic_stop = trade.get_custom_data(key="dynamic_stop", default=None)
+            initial_stop = trade.get_custom_data(key="initial_stop", default=None)
+
+            # For long positions
+            if not trade.is_short:
+                # If using dynamic stop, check against dynamic stop level
+                if use_dynamic_stop and dynamic_stop is not None:
+                    # Allow exit only if close is below dynamic stop
+                    if last_candle["close"] >= dynamic_stop:
+                        logger.info(
+                            f"Preventing exit for {pair} (long) - "
+                            f"Close ({last_candle['close']:.6f}) >= "
+                            f"Dynamic Stop ({dynamic_stop:.6f})"
+                        )
+                        return False  # Prevent exit
+                else:
+                    # Check against initial stop loss
+                    if last_candle["close"] >= initial_stop:
+                        logger.info(
+                            f"Preventing exit for {pair} (long) - "
+                            f"Close ({last_candle['close']:.6f}) >= "
+                            f"Initial Stop ({initial_stop:.6f})"
+                        )
+                        return False  # Prevent exit
+
+            # For short positions
+            else:
+                # If using dynamic stop, check against dynamic stop level
+                if use_dynamic_stop and dynamic_stop is not None:
+                    # Allow exit only if close is above dynamic stop
+                    if last_candle["close"] <= dynamic_stop:
+                        logger.info(
+                            f"Preventing exit for {pair} (short) - "
+                            f"Close ({last_candle['close']:.6f}) <= "
+                            f"Dynamic Stop ({dynamic_stop:.6f})"
+                        )
+                        return False  # Prevent exit
+                else:
+                    # Check against initial stop loss
+                    if last_candle["close"] <= initial_stop:
+                        logger.info(
+                            f"Preventing exit for {pair} (short) - "
+                            f"Close ({last_candle['close']:.6f}) <= "
+                            f"Initial Stop ({initial_stop:.6f})"
+                        )
+                        return False  # Prevent exit
+
+            # If we get here, allow the exit
+            return True
+
+        except Exception as e:
+            logger.error(f"Error in confirm_trade_exit: {str(e)}")
+            # In case of error, allow the exit to proceed
+            return True
+
     def custom_stoploss(
         self,
         pair: str,
@@ -859,7 +903,8 @@ class FractalStrategy(IStrategy):
         **kwargs,
     ) -> float | None:
         """
-        Custom stop loss based on ATR and support/resistance levels
+        Custom stop loss based on ATR and support/resistance levels, with dynamic trailing based on
+        rising troughs for long positions and falling peaks for short positions
         """
         try:
             # Enhanced logging
@@ -877,38 +922,83 @@ class FractalStrategy(IStrategy):
                 key="take_profit_reduced", default=False
             )
 
+            # Get the dynamic stop and initial stop from trade custom data
+            dynamic_stop = trade.get_custom_data(key="dynamic_stop", default=None)
+            initial_stop = trade.get_custom_data(key="initial_stop", default=None)
+            use_dynamic_stop = trade.get_custom_data(key="use_dynamic_stop", default=False)
+            trailing_atr = self.atr_stop_ratio.value * last_candle['atr']
+            stop_loss_price = None
+
+            # Immediately after the entry order is filled, set the stop loss to 0.2% below the long stop
             if after_fill and not take_profit_reduced:
                 # If after fill and take profit not reduced, set stop loss to 0.2% below trough
                 if not trade.is_short:
                     stop_loss_price = last_candle.get("long_stop", 0) * 0.998
+                    # Initialize dynamic stop with the initial stop loss for long positions
+                    trade.set_custom_data(key="initial_stop", value=stop_loss_price)
+                    trade.set_custom_data(key="dynamic_stop", value=stop_loss_price)
                 else:
                     stop_loss_price = last_candle.get("short_stop", float("inf")) * 1.002
+                    # Initialize dynamic stop with the initial stop loss for short positions
+                    trade.set_custom_data(key="initial_stop", value=stop_loss_price)
+                    trade.set_custom_data(key="dynamic_stop", value=stop_loss_price)
 
             else:
-                trailing_atr = self.atr_stop_ratio.value * last_candle['atr']
+                # Determine if we should start using dynamic stop
+                # Conditions to start using dynamic stop:
+                # 1. Trade has reached 1% profit
+                # 2. Or 30 minutes have passed since entry
+                # 3. Or the trough/peak has moved from its initial value
+                if not use_dynamic_stop:
+                    time_since_entry = (current_time - trade.open_date).total_seconds() / 60  # minutes
+                    if (current_profit >= 0.01 or  # 1% profit
+                        time_since_entry >= 30 or  # 30 minutes passed
+                        (not trade.is_short and last_candle.get(f"trough_{self.primary_timeframe}", 0) != initial_stop) or
+                        (trade.is_short and last_candle.get(f"peak_{self.primary_timeframe}", float("inf")) != initial_stop)):
+                        trade.set_custom_data(key="use_dynamic_stop", value=True)
+                        use_dynamic_stop = True
 
                 # For long positions
                 if not trade.is_short:
-                    atr_stop_price = last_candle["close"] - trailing_atr
-                    # Use the more conservative stop (higher for long)
-                    stop_loss_price = last_candle.get("long_stop", 0) * (1 - self.trailing_stop_ratio.value)
+                    # Get the current trough value on primary timeframe
+                    current_trough = last_candle.get(f"trough_{self.primary_timeframe}", 0) * 0.998
 
-                    higher_stop = max(atr_stop_price, stop_loss_price)
+                    # Update dynamic stop if we're using dynamic stop and current trough is higher
+                    if use_dynamic_stop and dynamic_stop is not None and current_trough > dynamic_stop:
+                        dynamic_stop = current_trough
+                        trade.set_custom_data(key="dynamic_stop", value=dynamic_stop)
 
-                    # Ensure stop is not too tight (at least 0.01% below entry)
-                    min_stop = trade.open_rate * 0.999
-                    stop_loss_price = min(higher_stop, min_stop)
+                    # Determine stop loss price based on conditions
+                    if use_dynamic_stop and dynamic_stop is not None:
+                        # Use dynamic stop with ATR buffer
+                        atr_stop_price = last_candle["close"] - trailing_atr
+                        stop_loss_price = max(dynamic_stop, atr_stop_price)
+                    else:
+                        # Use initial stop loss approach
+                        atr_stop_price = last_candle["close"] - trailing_atr
+                        initial_stop_price = last_candle.get("long_stop", 0) * (1 - self.trailing_stop_ratio.value)
+                        stop_loss_price = max(atr_stop_price, initial_stop_price)
 
                 # For short positions
                 else:
-                    atr_stop_price = last_candle["close"] + trailing_atr
-                    # Use the more conservative stop (lower for short)
-                    stop_loss_price = last_candle.get("short_stop", float("inf")) * (1 + self.trailing_stop_ratio.value)
+                    # Get the current peak value on primary timeframe
+                    current_peak = last_candle.get(f"peak_{self.primary_timeframe}", float("inf")) * 1.002
 
-                    lower_stop = min(atr_stop_price, stop_loss_price)
-                    # Ensure stop is not too tight (at least 0.1% above entry)
-                    max_stop = trade.open_rate * 1.001
-                    stop_loss_price = max(lower_stop, max_stop)
+                    # Update dynamic stop if we're using dynamic stop and current peak is lower
+                    if use_dynamic_stop and dynamic_stop is not None and current_peak < dynamic_stop:
+                        dynamic_stop = current_peak
+                        trade.set_custom_data(key="dynamic_stop", value=dynamic_stop)
+
+                    # Determine stop loss price based on conditions
+                    if use_dynamic_stop and dynamic_stop is not None:
+                        # Use dynamic stop with ATR buffer
+                        atr_stop_price = last_candle["close"] + trailing_atr
+                        stop_loss_price = min(dynamic_stop, atr_stop_price)
+                    else:
+                        # Use initial stop loss approach
+                        atr_stop_price = last_candle["close"] + trailing_atr
+                        initial_stop_price = last_candle.get("short_stop", float("inf")) * (1 + self.trailing_stop_ratio.value)
+                        stop_loss_price = min(atr_stop_price, initial_stop_price)
 
             # Convert to percentage
             if stop_loss_price > 0:
