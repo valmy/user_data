@@ -22,17 +22,16 @@
       "trigger_type": "lrsi",
       "primary_chop_threshold": 59,
       "rr_ratio": 2.0,
-      "small_candle_ratio": 2.8,
-      "use_rr_ratio": true,
-      "volume_threshold": 2.3
+      "small_candle_ratio": 2.7,
+      "volume_threshold": 3.4
     },
     "sell": {
       "sell_laguerre_level": 0.8,
-      "atr_stop_ratio": 5.9,
-      "trailing_stop_ratio": 0.16
+      "atr_stop_ratio": 5.3,
+      "trailing_stop_ratio": 0.2
     },
     "protection": {}
   },
   "ft_stratparam_v": 1,
-  "export_time": "2025-07-25 21:04:14.766444+00:00"
+  "export_time": "2025-07-26 02:31:03.440528+00:00"
 }

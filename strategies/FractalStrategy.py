@@ -153,7 +153,6 @@ class FractalStrategy(IStrategy):
         35, 50, default=40, space="buy", load=False, optimize=False
     )
 
-    use_rr_ratio = BooleanParameter(default=True, space="buy", optimize=True)
     rr_ratio = DecimalParameter(
         1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=True
     )
@@ -586,7 +585,7 @@ class FractalStrategy(IStrategy):
                 # LONG Entry Conditions
                 long_rr_cond = (
                     (df["long_rr_ratio"] >= self.rr_ratio.value)
-                    if self.use_rr_ratio.value and self.trigger_type.value == "lrsi"
+                    if self.trigger_type.value == "lrsi"
                     else True
                 )
 
@@ -671,7 +670,7 @@ class FractalStrategy(IStrategy):
                 # SHORT Entry Conditions
                 short_rr_cond = (
                     (df["short_rr_ratio"] >= self.rr_ratio.value)
-                    if self.use_rr_ratio.value and self.trigger_type.value != 'breakout'
+                    if self.trigger_type.value == 'lrsi'
                     else True
                 )
 
@@ -991,9 +990,9 @@ class FractalStrategy(IStrategy):
 
                     if (price_increased or price_decreased or  # profit
                         trough_changed or peak_changed):
-                        print(f"Enabling dynamic stop for {pair} ({'short' if trade.is_short else 'long'}): "
-                              f"Profit: {current_profit:.2%}, "
-                              f"Trough changed: {trough_changed}, Peak changed: {peak_changed}")
+                        # logger.debug(f"Enabling dynamic stop for {pair} ({'short' if trade.is_short else 'long'}): "
+                        #       f"Profit: {current_profit:.2%}, "
+                        #       f"Trough changed: {trough_changed}, Peak changed: {peak_changed}")
                         trade.set_custom_data(key="use_dynamic_stop", value=True)
                         use_dynamic_stop = True
 
@@ -1058,7 +1057,7 @@ class FractalStrategy(IStrategy):
 
                     # Update dynamic stop if we're using dynamic stop and current peak is lower
                     if use_dynamic_stop and dynamic_stop is not None and current_peak < dynamic_stop:
-                        old_dynamic_stop = dynamic_stop
+                        # old_dynamic_stop = dynamic_stop
                         dynamic_stop = current_peak
                         trade.set_custom_data(key="dynamic_stop", value=dynamic_stop)
 
@@ -1100,14 +1099,14 @@ class FractalStrategy(IStrategy):
                 # Check if the difference is significant (greater than epsilon)
                 stop_loss_changed = (abs(stop_loss_price - current_stop_loss) / current_stop_loss) > epsilon
 
-                if stop_loss_changed:
-                    logger.debug(
-                        f"{current_time.strftime('%Y-%m-%d %H:%M')} Stoploss update for {pair} "
-                        f"({'short' if trade.is_short else 'long'}): "
-                        f"price={stop_loss_price:.6f}, "
-                        f"percent={final_stoploss:.4%}"
-                    )
-                else:
+                if not stop_loss_changed:
+                    # logger.debug(
+                    #     f"{current_time.strftime('%Y-%m-%d %H:%M')} Stoploss update for {pair} "
+                    #     f"({'short' if trade.is_short else 'long'}): "
+                    #     f"price={stop_loss_price:.6f}, "
+                    #     f"percent={final_stoploss:.4%}"
+                    # )
+                # else:
                     return None
 
                 return final_stoploss
