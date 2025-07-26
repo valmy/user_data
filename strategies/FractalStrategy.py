@@ -171,8 +171,6 @@ class FractalStrategy(IStrategy):
         0.05, 10.0, default=5.0, decimals=1, space="sell", load=True, optimize=True
     )
 
-    _force_leverage_one_for_this_trade: bool = False
-
     def is_hyperopt_mode(self) -> bool:
         """Check if the current run mode is hyperopt"""
         return self.dp.runmode.value == "hyperopt"
@@ -1163,7 +1161,6 @@ class FractalStrategy(IStrategy):
         **kwargs,
     ) -> float:
 
-        self._force_leverage_one_for_this_trade = False  # Reset at the beginning
         total_equity = self.get_total_equity()
         collateral_per_slot = self._get_collateral_per_trade_slot(total_equity)
 
@@ -1200,17 +1197,6 @@ class FractalStrategy(IStrategy):
         - Calculated leverage = (desired_position_size * current_rate) / stake_for_this_trade.
         - If calculated leverage > max_leverage, do not enter (return 0.0).
         """
-        # Check if custom_stake_amount decided to force leverage 1.0
-        # This flag would be set by custom_stake_amount if it's active and makes such a decision.
-        if (
-            hasattr(self, "_force_leverage_one_for_this_trade")
-            and self._force_leverage_one_for_this_trade
-        ):
-            self._force_leverage_one_for_this_trade = (
-                False  # Reset flag for the next trade
-            )
-            return 1.0
-
         # Get total equity in stake currency
         total_equity = self.get_total_equity()
         logger.debug(f"Leverage: Calculating total equity for {pair}: {total_equity}")
@@ -1239,7 +1225,7 @@ class FractalStrategy(IStrategy):
                     f"Leverage: long_stop is NaN for {pair} on {current_time}."
                 )
                 return 0.0  # Stop-loss level not found or NaN
-            stop_loss_price = raw_stop_price * 0.998
+            stop_loss_price = raw_stop_price * 0.995
             if current_rate <= stop_loss_price:
                 return 0.0  # Invalid stop-loss for long
             price_diff_to_stop = current_rate - stop_loss_price
@@ -1250,7 +1236,7 @@ class FractalStrategy(IStrategy):
                     f"Leverage: short_stop is NaN for {pair} on {current_time}."
                 )
                 return 0.0  # Stop-loss level not found or NaN
-            stop_loss_price = raw_stop_price * 1.002
+            stop_loss_price = raw_stop_price * 1.005
             if current_rate >= stop_loss_price:
                 return 0.0  # Invalid stop-loss for short
             price_diff_to_stop = stop_loss_price - current_rate
@@ -1285,10 +1271,8 @@ class FractalStrategy(IStrategy):
         if required_leverage <= 1e-7:  # Effectively zero or negative desired leverage
             return 0.0  # Do not trade
 
-        if required_leverage > max_leverage:
-            return 0.0  # Required leverage too high, do not enter
         if required_leverage < 1.0:
-            final_leverage = 1.0  # Use at least 1x leverage if conditions allow a trade
+            return 0.0  # Do not trade, likely the opportunity is not worth it
         else:
             final_leverage = required_leverage
 
