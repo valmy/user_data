@@ -171,6 +171,10 @@ class FractalStrategy(IStrategy):
         0.05, 10.0, default=5.0, decimals=1, space="sell", load=True, optimize=True
     )
 
+    use_take_profit_2 = BooleanParameter(
+        default=True, space="sell", optimize=True
+    )
+
     def is_hyperopt_mode(self) -> bool:
         """Check if the current run mode is hyperopt"""
         return self.dp.runmode.value == "hyperopt"
@@ -1385,9 +1389,10 @@ class FractalStrategy(IStrategy):
         take_profit_reduced = trade.get_custom_data(
             key="take_profit_reduced", default=False
         )
+
         take_profit_2_reduced = trade.get_custom_data(
             key="take_profit_2_reduced", default=False
-        )
+        ) if self.use_take_profit_2.value else True
 
         # Check if we've reached take profit price and haven't reduced position yet
         # For long positions: current_rate >= take_profit_price
