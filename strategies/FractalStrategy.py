@@ -951,7 +951,9 @@ class FractalStrategy(IStrategy):
             initial_stop = trade.get_custom_data(key="initial_stop", default=None)
             use_dynamic_stop = trade.get_custom_data(key="use_dynamic_stop", default=False)
 
-            if after_fill and not take_profit_reduced:
+            # Only initialize stop loss in custom_stoploss if it hasn't been set yet
+            # (i.e., if order_filled didn't run or didn't set the values)
+            if after_fill and not take_profit_reduced and initial_stop is None:
                 # If after fill and take profit not reduced, set stop loss to 0.2% below trough
                 if not trade.is_short:
                     stop_loss_price = last_candle.get("long_stop", 0) * 0.995
@@ -970,7 +972,8 @@ class FractalStrategy(IStrategy):
                 #     f"Initial stop set to {stop_loss_price:.6f}, use_dynamic_stop={use_dynamic_stop}"
                 # )
 
-            else:
+            # If we're not after fill or the stop loss is already initialized, proceed with normal logic
+            if not after_fill or initial_stop is not None:
                 trailing_atr = self.atr_stop_ratio.value * last_candle['atr']
 
                 # Determine if we should start using dynamic stop
@@ -1314,7 +1317,7 @@ class FractalStrategy(IStrategy):
 
         if side == "long":
             raw_stop_price = last_candle.get("long_stop")
-            stop_loss_price = raw_stop_price * 0.998
+            stop_loss_price = raw_stop_price * 0.995
             price_diff_to_stop = trade.open_rate - stop_loss_price
             take_profit_price = trade.open_rate + price_diff_to_stop
             take_profit_2_price = last_candle.get("long_target")
@@ -1322,7 +1325,7 @@ class FractalStrategy(IStrategy):
                 take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
         elif side == "short":
             raw_stop_price = last_candle.get("short_stop")
-            stop_loss_price = raw_stop_price * 1.002
+            stop_loss_price = raw_stop_price * 1.005
             price_diff_to_stop = stop_loss_price - trade.open_rate
             take_profit_price = trade.open_rate - price_diff_to_stop
             take_profit_2_price = last_candle.get("short_target")
