@@ -122,9 +122,11 @@ class FractalStrategy(IStrategy):
     startup_candle_count: int = int(max(50, 3 * ratio_major_to_signal))
 
     # Trigger type
-    trigger_type = CategoricalParameter(
-        ["lrsi", "cradle", "breakout"], default="lrsi", space="buy", optimize=False
-    )
+    use_lrsi_trigger = BooleanParameter(default=False, space="buy", optimize=True)
+    # Parameters for cradle convergence
+    use_cradle_trigger = BooleanParameter(default=True, space="buy", optimize=True)
+    convergence_window = IntParameter(3, 10, default=5, space="buy", optimize=True)
+    use_breakout_trigger = BooleanParameter(default=False, space="buy", optimize=False)
 
     # Parameters for tuning
     volume_threshold = DecimalParameter(
@@ -224,6 +226,11 @@ class FractalStrategy(IStrategy):
         """
         Populate indicators for primary trend identification on primary_timeframe timeframe
         """
+
+        # Define confirmation ema
+        dataframe["ema10"] = ta.EMA(dataframe, timeperiod=10)
+        dataframe["ema20"] = ta.EMA(dataframe, timeperiod=20)
+
         # Donchian Channels (using 5-period window)
         # These are used for trend identification
         dataframe["donchian_upper"] = dataframe["high"].rolling(window=5).max()
@@ -466,6 +473,9 @@ class FractalStrategy(IStrategy):
             self.small_candle_ratio.value * dataframe["atr"]
         )
 
+        # MACD
+        dataframe.ta.macd(fast=12, slow=26, signal=9, append=True)
+
         # Donchian Channels (using 36-period window)
         major_period = round(3 * self.ratio_major_to_signal)
         primary_period = round(3 * self.ratio_primary_to_signal)
@@ -508,6 +518,7 @@ class FractalStrategy(IStrategy):
             # Initialize signal columns
             df["enter_long"] = 0
             df["enter_short"] = 0
+            df["enter_tag"] = ""
 
             # Calculate conditions with error handling
             try:
@@ -526,14 +537,8 @@ class FractalStrategy(IStrategy):
                 ptf_thresh_val = self.primary_chop_threshold.value
                 mtf_thresh_val = self.major_chop_threshold.value
 
-                # logger.debug(f"Primary chop ({ptf_chop_col}) dtype: {df[ptf_chop_col].dtype}, head: {df[ptf_chop_col].head(3).to_list()}, threshold: {ptf_thresh_val} (type: {type(ptf_thresh_val)})")
-                # logger.debug(f"Major chop ({mtf_chop_col}) dtype: {df[mtf_chop_col].dtype}, head: {df[mtf_chop_col].head(3).to_list()}, threshold: {mtf_thresh_val} (type: {type(mtf_thresh_val)})")
-
                 cond_ptf_chop = df[ptf_chop_col] > ptf_thresh_val
                 cond_mtf_chop = df[mtf_chop_col] > mtf_thresh_val
-
-                # logger.debug(f"cond_ptf_chop dtype: {cond_ptf_chop.dtype}, head: {cond_ptf_chop.head(3).to_list()}")
-                # logger.debug(f"cond_mtf_chop dtype: {cond_mtf_chop.dtype}, head: {cond_mtf_chop.head(3).to_list()}")
 
                 # --- Debugging ---
                 # Get the ha_upswing from the informative major timeframe
@@ -558,7 +563,6 @@ class FractalStrategy(IStrategy):
                 df["strong_volume"] = df["volume"] > (df["volume_mean"] * 1.5)
                 df["bullish_candle"] = df["close"] > df["open"]
                 df["bearish_candle"] = df["close"] < df["open"]
-                # df['above_ema20'] = df['close'] > df['ema20']
                 back_range = int(3 * self.ratio_primary_to_signal)
                 df["above_resistance"] = (
                     df["low"].rolling(window=back_range).min()
@@ -573,8 +577,7 @@ class FractalStrategy(IStrategy):
                 df["close_minus_2atr"] = df["close"] - 2 * df["atr"]
                 df["close_above_close_minus_2atr"] = df["close"] > df["close_minus_2atr"]
 
-                # RR ratio calculation, consider the donchian_upper in major timeframe as the target
-                # and trough in primary timeframe as the stop loss
+                # RR ratio calculation
                 df["long_rr_ratio"] = (
                     (df[f"donchian_upper_{self.major_timeframe}"] - df["close"])
                     / (df["close"] - df[f"trough_{self.primary_timeframe}"])
@@ -584,144 +587,200 @@ class FractalStrategy(IStrategy):
                     / (df[f"peak_{self.primary_timeframe}"] - df["close"])
                 )
 
-                # LONG Entry Conditions
-                long_rr_cond = (
-                    (df["long_rr_ratio"] >= self.rr_ratio.value)
-                    if self.trigger_type.value == "lrsi"
-                    else True
+                df["long_cradle_rr_ratio"] = (
+                    (df[f"donchian_upper_{self.major_timeframe}"] - df["high"])
+                    / (df["high"] - df["stop_lower"])
+                )
+                df["short_cradle_rr_ratio"] = (
+                    (df["low"] - df[f"donchian_lower_{self.major_timeframe}"])
+                    / (df["stop_upper"] - df["low"])
                 )
 
-                # --- Trigger conditions mapping ---
-                long_trigger_conditions = {
-                    "lrsi": (
-                        qtpylib.crossed_above(
-                            df["laguerre"], self.buy_laguerre_level.value
-                        )
-                    ),
-                    "cradle": (
-                        (df["in_cradle"].shift(1))
-                        & (df["ema20"] < df["ema10"])
-                        & (df["close"] > df["high"].shift(1))
-                        & (df["bullish_candle"].shift(1))
-                        & (df["bullish_candle"])
-                        & (df["small_candle"].shift(1))
-                    ),
-                    "breakout": (
-                        qtpylib.crossed_above(
-                            df["close"], df["donchian_upper"].shift(1)
-                        )
-                        & (df["bullish_candle"])
-                    ),
-                    # Add more trigger types here as needed
-                }
-                long_trigger_condition = long_trigger_conditions.get(
-                    self.trigger_type.value,
-                    pd.Series([False] * len(df), index=df.index)
+                # --- Trigger conditions ---
+                # LRSI Triggers
+                long_lrsi_trigger = qtpylib.crossed_above(df["laguerre"], self.buy_laguerre_level.value)
+                short_lrsi_trigger = qtpylib.crossed_below(df["laguerre"], self.sell_laguerre_level.value)
+
+                # Detect peaks and troughs in signal timeframe (5m)
+                # Peak: high is higher than previous and next candles
+                df["is_peak"] = (
+                    (df["high"] > df["high"].shift(1)) &
+                    (df["high"] > df["high"].shift(2)) &
+                    (df["high"] >= df["high"].shift(-1)) &
+                    (df["high"] >= df["high"].shift(-2))
                 )
 
-                short_trigger_conditions = {
-                    "lrsi": (
-                        qtpylib.crossed_below(
-                            df["laguerre"], self.sell_laguerre_level.value
-                        )
-                    ),
-                    "cradle": (
-                        (df["in_cradle"].shift(1))
-                        & (df["ema20"] > df["ema10"])
-                        & (df["close"] < df["low"].shift(1))
-                        & (df["bearish_candle"].shift(1))
-                        & (df["bearish_candle"])
-                        & (df["small_candle"].shift(1))
-                    ),
-                    "breakout": (
-                        qtpylib.crossed_below(
-                            df["close"], df["donchian_lower"].shift(1)
-                        )
-                        & (df["bearish_candle"])
-                    ),
-                    # Add more trigger types here as needed
-                }
-                short_trigger_condition = short_trigger_conditions.get(
-                    self.trigger_type.value,
-                    pd.Series([False] * len(df), index=df.index)
+                # Trough: low is lower than previous and next candles
+                df["is_trough"] = (
+                    (df["low"] < df["low"].shift(1)) &
+                    (df["low"] < df["low"].shift(2)) &
+                    (df["low"] <= df["low"].shift(-1)) &
+                    (df["low"] <= df["low"].shift(-2))
                 )
 
-                long_condition = (
-                    # signal: laguerre crosses above buy_laguerre_level
-                    long_trigger_condition
-                    &
-                    # at least 3 of the last 4 major heikin ashi candles are bullish
-                    df[ha_upswing_col]
-                    &
-                    # enough energy (using pre-calculated conditions)
-                    cond_ptf_chop
-                    & cond_mtf_chop
-                    &
-                    # confirmation: strong volume
-                    df["strong_volume"]
-                    &
-                    # df["above_resistance"]
-                    # &
-                    # small candle condition (to make sure the price action is not too volatile)
+                # Identify peak and trough values
+                df["peak_value"] = np.where(df["is_peak"], df["high"], np.nan)
+                df["peak_value"] = df["peak_value"].ffill()
+                df["trough_value"] = np.where(df["is_trough"], df["low"], np.nan)
+                df["trough_value"] = df["trough_value"].ffill()
+
+                # Identify increasing/decreasing peaks and troughs
+                # For peaks: compare current peak with previous peak
+                window = self.convergence_window.value
+                df["peak_increasing"] = df["peak_value"] > df["peak_value"].shift(window)
+                df["peak_decreasing"] = df["peak_value"] < df["peak_value"].shift(window)
+
+                # For troughs: compare current trough with previous trough
+                df["trough_increasing"] = df["trough_value"] > df["trough_value"].shift(window)
+                df["trough_decreasing"] = df["trough_value"] < df["trough_value"].shift(window)
+
+                # Identify MACD peaks and troughs
+                df["macd_peak"] = (
+                    (df["MACD_12_26_9"] > df["MACD_12_26_9"].shift(1)) &
+                    (df["MACD_12_26_9"] > df["MACD_12_26_9"].shift(2)) &
+                    (df["MACD_12_26_9"] >= df["MACD_12_26_9"].shift(-1)) &
+                    (df["MACD_12_26_9"] >= df["MACD_12_26_9"].shift(-2))
+                )
+
+                df["macd_trough"] = (
+                    (df["MACD_12_26_9"] < df["MACD_12_26_9"].shift(1)) &
+                    (df["MACD_12_26_9"] < df["MACD_12_26_9"].shift(2)) &
+                    (df["MACD_12_26_9"] <= df["MACD_12_26_9"].shift(-1)) &
+                    (df["MACD_12_26_9"] <= df["MACD_12_26_9"].shift(-2))
+                )
+
+                # Identify MACD peak and trough values
+                df["macd_peak_value"] = np.where(df["macd_peak"], df["MACD_12_26_9"], np.nan)
+                df["macd_peak_value"] = df["macd_peak_value"].ffill()
+                df["macd_trough_value"] = np.where(df["macd_trough"], df["MACD_12_26_9"], np.nan)
+                df["macd_trough_value"] = df["macd_trough_value"].ffill()
+
+                # Identify increasing/decreasing MACD peaks and troughs
+                # For MACD peaks: compare current peak with previous peak
+                df["macd_peak_increasing"] = df["macd_peak_value"] > df["macd_peak_value"].shift(window)
+                df["macd_peak_decreasing"] = df["macd_peak_value"] < df["macd_peak_value"].shift(window)
+
+                # For MACD troughs: compare current trough with previous trough
+                df["macd_trough_increasing"] = df["macd_trough_value"] > df["macd_trough_value"].shift(window)
+                df["macd_trough_decreasing"] = df["macd_trough_value"] < df["macd_trough_value"].shift(window)
+
+                # Cradle Triggers
+                long_cradle_base = (
+                    df["in_cradle"]
+                    & (df["ema20"] < df["ema10"])
+                    & (df[f"ema20_{self.primary_timeframe}"] < df[f"ema10_{self.primary_timeframe}"])
+                    & (df["bullish_candle"])
+                    & (df["small_candle"])
+                )
+
+                short_cradle_base = (
+                    df["in_cradle"]
+                    & (df["ema20"] > df["ema10"])
+                    & (df[f"ema20_{self.primary_timeframe}"] > df[f"ema10_{self.primary_timeframe}"])
+                    & (df["bearish_candle"])
+                    & (df["small_candle"])
+                )
+
+                # Additional condition: no candle in the previous window candles has highs below ema20 for long trades
+                # and no candle in the previous window candles has lows above ema20 for short trades
+                window = self.convergence_window.value
+                long_no_low_candles = True
+                short_no_high_candles = True
+
+                for i in range(1, window + 1):
+                    long_no_low_candles = long_no_low_candles & (df["high"].shift(i) >= df["ema20"].shift(i))
+                    short_no_high_candles = short_no_high_candles & (df["low"].shift(i) <= df["ema20"].shift(i))
+
+                long_cradle_base = long_cradle_base & long_no_low_candles
+                short_cradle_base = short_cradle_base & short_no_high_candles
+
+                # Cradle Triggers with convergence confirmation
+                long_cradle_trigger = long_cradle_base
+                short_cradle_trigger = short_cradle_base
+
+                # Apply convergence filter if enabled
+                if self.use_cradle_trigger.value:
+                    # For long entries, we want either:
+                    # 1. Price peaks increasing and MACD peaks increasing (bullish convergence)
+                    # 2. Price troughs increasing (bullish divergence)
+                    long_cradle_trigger = long_cradle_base & (
+                        (df["peak_increasing"] & df["macd_peak_increasing"] & df["trough_increasing"])
+                    )
+
+                    # For short entries, we want either:
+                    # 1. Price peaks decreasing and MACD peaks decreasing (bearish convergence)
+                    # 2. Price troughs decreasing (bearish divergence)
+                    short_cradle_trigger = short_cradle_base & (
+                        (df["peak_decreasing"] & df["macd_peak_decreasing"] & df["trough_decreasing"])
+                    )
+
+                # Breakout Triggers
+                long_breakout_trigger = (
+                    qtpylib.crossed_above(df["close"], df["donchian_upper"].shift(1))
+                    & (df["bullish_candle"])
+                )
+                short_breakout_trigger = (
+                    qtpylib.crossed_below(df["close"], df["donchian_lower"].shift(1))
+                    & (df["bearish_candle"])
+                )
+
+                # --- Base Entry Conditions (excluding triggers) ---
+                base_long_condition = (
+                    df[ha_upswing_col] &
+                    cond_mtf_chop &
+                    df["strong_volume"] &
                     df["small_candle"]
-                    &
-                    # RR ratio condition
-                    long_rr_cond
                 )
-
-                # SHORT Entry Conditions
-                short_rr_cond = (
-                    (df["short_rr_ratio"] >= self.rr_ratio.value)
-                    if self.trigger_type.value == 'lrsi'
-                    else True
-                )
-
-                short_condition = (
-                    # signal: laguerre crosses below sell_laguerre_level
-                    short_trigger_condition
-                    &
-                    # at least 3 of the last 4 major heikin ashi candles are bearish
-                    df[ha_downswing_col]
-                    &
-                    # enough energy
-                    cond_ptf_chop
-                    & cond_mtf_chop
-                    &
-                    # confirmation: strong volume
-                    df["strong_volume"]
-                    # &
-                    # df["below_support"]
-                    &
-                    # small candle condition
+                base_short_condition = (
+                    df[ha_downswing_col] &
+                    cond_mtf_chop &
+                    df["strong_volume"] &
                     df["small_candle"]
-                    &
-                    # RR ratio condition
-                    short_rr_cond
                 )
 
-                # Apply conditions with position sizing
-                df.loc[long_condition, "enter_long"] = 1
+                # --- Combine Triggers and Base Conditions ---
+                # Long Entries
+                if self.use_breakout_trigger.value:
+                    long_condition = base_long_condition & long_breakout_trigger
+                    df.loc[long_condition, ["enter_long", "enter_tag"]] = (1, "breakout")
 
+                # Use cradle trigger
+                if self.use_cradle_trigger.value:
+                    long_rr_cond = df["long_cradle_rr_ratio"] >= 1.0
+                    long_condition = base_long_condition & long_cradle_trigger & long_rr_cond
+                    df.loc[long_condition, ["enter_long", "enter_tag"]] = (1, "cradle")
+
+                if self.use_lrsi_trigger.value:
+                    long_rr_cond = df["long_rr_ratio"] >= self.rr_ratio.value
+                    long_condition = (base_long_condition
+                        & cond_ptf_chop
+                        & long_lrsi_trigger
+                        & long_rr_cond)
+                    df.loc[long_condition, ["enter_long", "enter_tag"]] = (1, "lrsi")
+
+                # Short Entries
                 if self.can_short:
-                    df.loc[short_condition, "enter_short"] = 1
+                    if self.use_breakout_trigger.value:
+                        short_condition = base_short_condition & short_breakout_trigger
+                        df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "breakout")
+
+                    # Use cradle trigger
+                    if self.use_cradle_trigger.value:
+                        short_rr_cond = df["short_cradle_rr_ratio"] >= 1.0
+                        short_condition = base_short_condition & short_cradle_trigger & short_rr_cond
+                        df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "cradle")
+
+                    if self.use_lrsi_trigger.value:
+                        short_rr_cond = df["short_rr_ratio"] >= self.rr_ratio.value
+                        short_condition = (base_short_condition
+                            & cond_ptf_chop
+                            & short_lrsi_trigger
+                            & short_rr_cond)
+                        df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "lrsi")
 
                 # Limit the number of signals to avoid over-trading
-                max_signals = len(df) // 30  # Max 1 signal per 30 candles
-
-                # For long signals
-                if sum(long_condition) > max_signals:
-                    long_signals = df[long_condition].index[-max_signals:]
-                    df["enter_long"] = 0
-                    df.loc[long_signals, "enter_long"] = 1
-
-                # For short signals
-                if self.can_short and sum(short_condition) > max_signals:
-                    short_signals = df[short_condition].index[-max_signals:]
-                    df["enter_short"] = 0
-                    df.loc[short_signals, "enter_short"] = 1
-
-                # Debug info
-                # logger.info(f"Generated {sum(df['enter_long'])} long and {sum(df['enter_short'])} short signals for {metadata['pair']}")
+                # This part might need adjustment if multiple signals can be generated in one candle
+                # For now, we assume the last trigger set wins, which is acceptable.
 
                 return df
 
@@ -799,6 +858,40 @@ class FractalStrategy(IStrategy):
             dataframe["exit_long"] = 0
             dataframe["exit_short"] = 0
             return dataframe
+
+    def confirm_trade_entry(
+        self,
+        pair: str,
+        order_type: str,
+        amount: float,
+        rate: float,
+        time_in_force: str,
+        current_time: datetime,
+        entry_tag: Optional[str],
+        side: str,
+        **kwargs,
+    ) -> bool:
+        """
+        Called right before placing a entry order.
+        Timing: Called after populate_entry_trend and before the entry order is placed.
+        """
+        if entry_tag == 'cradle':
+            dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+            if len(dataframe) < 2:
+                return False
+
+            last_candle = dataframe.iloc[-2]  # Previous candle
+
+            if side == "long":
+                if rate > last_candle['high']:
+                    return True
+            elif side == "short":
+                if rate < last_candle['low']:
+                    return True
+
+            return False
+
+        return True
 
     def confirm_trade_exit(
         self,
@@ -1229,9 +1322,9 @@ class FractalStrategy(IStrategy):
             raw_stop_price = last_candle.get("long_stop")
             if pd.isna(raw_stop_price):
                 logger.warning(
-                    f"Leverage: long_stop is NaN for {pair} on {current_time}."
+                    f"Leverage: long_stop is np.nan for {pair} on {current_time}."
                 )
-                return 0.0  # Stop-loss level not found or NaN
+                return 0.0  # Stop-loss level not found or np.nan
             stop_loss_price = raw_stop_price * 0.995
             if current_rate <= stop_loss_price:
                 return 0.0  # Invalid stop-loss for long
@@ -1240,9 +1333,9 @@ class FractalStrategy(IStrategy):
             raw_stop_price = last_candle.get("short_stop")
             if pd.isna(raw_stop_price):
                 logger.warning(
-                    f"Leverage: short_stop is NaN for {pair} on {current_time}."
+                    f"Leverage: short_stop is np.nan for {pair} on {current_time}."
                 )
-                return 0.0  # Stop-loss level not found or NaN
+                return 0.0  # Stop-loss level not found or np.nan
             stop_loss_price = raw_stop_price * 1.005
             if current_rate >= stop_loss_price:
                 return 0.0  # Invalid stop-loss for short
@@ -1391,7 +1484,7 @@ class FractalStrategy(IStrategy):
         )
         take_profit_2_reduced = trade.get_custom_data(
             key="take_profit_2_reduced", default=False
-        ) if self.use_take_profit_2.value else True
+        ) if self.use_take_profit_2.value and trade.enter_tag == "lrsi" else True
 
         # Check if we've reached take profit price and haven't reduced position yet
         # For long positions: current_rate >= take_profit_price

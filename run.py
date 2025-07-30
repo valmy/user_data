@@ -15,7 +15,6 @@ from freqtrade.enums import CandleType
 from freqtrade.exchange.binance import Binance
 from freqtrade.resolvers import StrategyResolver
 
-
 # Change directory
 # Modify this cell to insure that the output shows the correct path.
 # Define all paths relative to the project root shown in the cell output
@@ -43,12 +42,11 @@ config = Configuration.from_files(["user_data/config-backtest.json"])
 # Location of the data
 data_location = config["datadir"]
 
-
 do_generate_charts = True
 
 # Date range configuration
 date_range_days = 0  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
-overall_start = "2025-07-01"
+overall_start = "2025-07-14"
 overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=UTC).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
@@ -511,6 +509,23 @@ if do_generate_charts:
                         annotation_position="bottom right",
                         line_color="rgba(200, 200, 200, 0.5)")
 
+            # Add EMA10 and EMA20 lines
+            if 'ema10' in data_red.columns:
+                fig.add_trace(go.Scatter(
+                    x=data_red.date,
+                    y=data_red['ema10'],
+                    name='EMA 10',
+                    line=dict(color='cyan', width=1)
+                ), row=1, col=1)
+                
+            if 'ema20' in data_red.columns:
+                fig.add_trace(go.Scatter(
+                    x=data_red.date,
+                    y=data_red['ema20'],
+                    name='EMA 20',
+                    line=dict(color='magenta', width=1)
+                ), row=1, col=1)
+
             # Update layout for a dark theme
             fig.update_layout(
                 template='plotly_dark',
@@ -589,9 +604,13 @@ print(stats["strategy"][strategy_name]["drawdown_end"])
 print(stats["strategy_comparison"])
 
 # Print all trades with date, pair, and profit details
-print("\nAll Trades (from backtest results):")
+print("\nAll Trades (from backtest results, open_date >= overall_start):")
 if not all_trades.empty:
-    print(all_trades[['open_date', 'pair', 'profit_ratio', 'profit_abs', 'exit_reason', 'trade_duration']])
+    filtered_trades = all_trades[all_trades["open_date"] >= overall_start]
+    if not filtered_trades.empty:
+        print(filtered_trades[['open_date', 'pair', 'profit_ratio', 'profit_abs', 'exit_reason', 'trade_duration']])
+    else:
+        print("No trades found with open_date >= overall_start.")
 else:
     print("No trades found in the backtest results.")
 
