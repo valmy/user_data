@@ -124,7 +124,7 @@ class FractalStrategy(IStrategy):
     # Trigger type
     use_lrsi_trigger = BooleanParameter(default=True, space="buy", optimize=False)
     # Parameters for cradle convergence
-    use_cradle_trigger = BooleanParameter(default=False, space="buy", optimize=False)
+    use_cradle_trigger = BooleanParameter(default=True, space="buy", optimize=False)
     convergence_window = IntParameter(3, 10, default=5, space="buy", optimize=False)
     use_breakout_trigger = BooleanParameter(default=False, space="buy", optimize=False)
 
@@ -668,6 +668,7 @@ class FractalStrategy(IStrategy):
                 long_cradle_base = (
                     df["in_cradle"]
                     & (df["ema20"] < df["ema10"])
+                    & (df[f"higher_high_{self.primary_timeframe}"])
                     & (df[f"ema20_{self.primary_timeframe}"] < df[f"ema10_{self.primary_timeframe}"])
                     & (df["bullish_candle"])
                     & (df["small_candle"])
@@ -676,6 +677,7 @@ class FractalStrategy(IStrategy):
                 short_cradle_base = (
                     df["in_cradle"]
                     & (df["ema20"] > df["ema10"])
+                    & (df[f"lower_low_{self.primary_timeframe}"])
                     & (df[f"ema20_{self.primary_timeframe}"] > df[f"ema10_{self.primary_timeframe}"])
                     & (df["bearish_candle"])
                     & (df["small_candle"])

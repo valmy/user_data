@@ -16,22 +16,26 @@
     },
     "buy": {
       "buy_laguerre_level": 0.2,
+      "convergence_window": 5,
       "laguerre_gamma": 0.67,
       "major_chop_threshold": 40,
       "max_risk_per_trade": 0.02,
-      "trigger_type": "lrsi",
-      "primary_chop_threshold": 59,
-      "rr_ratio": 2.0,
-      "small_candle_ratio": 2.7,
-      "volume_threshold": 3.4
+      "use_breakout_trigger": false,
+      "use_cradle_trigger": false,
+      "use_lrsi_trigger": true,
+      "primary_chop_threshold": 42,
+      "rr_ratio": 1.9,
+      "small_candle_ratio": 3.4,
+      "volume_threshold": 1.7
     },
     "sell": {
       "sell_laguerre_level": 0.8,
-      "atr_stop_ratio": 5.3,
-      "trailing_stop_ratio": 0.2
+      "atr_stop_ratio": 6.5,
+      "trailing_stop_ratio": 0.24,
+      "use_take_profit_2": false
     },
     "protection": {}
   },
   "ft_stratparam_v": 1,
-  "export_time": "2025-07-26 02:31:03.440528+00:00"
+  "export_time": "2025-07-31 18:21:54.772643+00:00"
 }
