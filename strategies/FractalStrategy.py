@@ -124,8 +124,8 @@ class FractalStrategy(IStrategy):
     # Trigger type
     use_lrsi_trigger = BooleanParameter(default=True, space="buy", optimize=False)
     # Parameters for cradle convergence
-    use_cradle_trigger = BooleanParameter(default=True, space="buy", optimize=False)
-    convergence_window = IntParameter(3, 10, default=5, space="buy", optimize=False)
+    use_cradle_trigger = BooleanParameter(default=True, space="buy", optimize=True)
+    convergence_window = IntParameter(3, 10, default=5, space="buy", optimize=True)
     use_breakout_trigger = BooleanParameter(default=False, space="buy", optimize=False)
 
     # Parameters for tuning
@@ -161,7 +161,7 @@ class FractalStrategy(IStrategy):
 
     # Custom trade size parameters
     max_risk_per_trade = DecimalParameter(
-        0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=False
+        0.01, 0.05, default=0.02, decimals=2, space="buy", load=True, optimize=False
     )
 
     # Sell parameters
@@ -170,8 +170,14 @@ class FractalStrategy(IStrategy):
     )
 
     atr_stop_ratio = DecimalParameter(
-        0.05, 10.0, default=5.0, decimals=1, space="sell", load=True, optimize=True
+        0.05, 10.0, default=5.0, decimals=2, space="sell", load=True, optimize=True
     )
+
+    slippage = DecimalParameter(
+        0.001, 0.01, default=0.003, decimals=3, space="sell", load=True, optimize=True
+    )
+    down_slippage = 1 - slippage.value
+    up_slippage = 1 + slippage.value
 
     use_take_profit_2 = BooleanParameter(
         default=True, space="sell", optimize=True
@@ -816,15 +822,6 @@ class FractalStrategy(IStrategy):
             df["exit_long"] = 0
             df["exit_short"] = 0
 
-            # Get entry tags from the dataframe if available (for backtesting)
-            # In live trading, we'll need to get them from the trade object
-            if "enter_tag" in df.columns:
-                # For backtesting, we can use the enter_tag from the dataframe
-                df["current_enter_tag"] = df["enter_tag"].ffill()
-            else:
-                # Default to lrsi if no enter_tag column
-                df["current_enter_tag"] = "lrsi"
-
             try:
                 # Define stop loss columns for different entry types
                 long_stop_col = f"trough_{self.primary_timeframe}"
@@ -853,23 +850,23 @@ class FractalStrategy(IStrategy):
                     return df  # Return df with no exits
 
                 # Create conditions for different entry types
-                is_lrsi_entry = df["current_enter_tag"] == "lrsi"
-                is_cradle_entry = df["current_enter_tag"] == "cradle"
-                is_breakout_entry = df["current_enter_tag"] == "breakout"
+                # is_lrsi_entry = df["current_enter_tag"] == "lrsi"
+                # is_cradle_entry = df["current_enter_tag"] == "cradle"
+                # is_breakout_entry = df["current_enter_tag"] == "breakout"
 
                 # Exit LONG positions based on entry type
-                exit_long_lrsi = (df["close"] < df[long_stop_col]) & is_lrsi_entry
-                exit_long_cradle = (df["close"] < df[long_cradle_stop_col]) & is_cradle_entry
-                exit_long_breakout = (df["close"] < df[long_breakout_stop_col]) & is_breakout_entry
+                exit_long_lrsi = (df["close"] < df[long_stop_col])
+                exit_long_cradle = (df["close"] < df[long_cradle_stop_col])
+                # exit_long_breakout = (df["close"] < df[long_breakout_stop_col]) & is_breakout_entry
 
                 # Exit SHORT positions based on entry type
-                exit_short_lrsi = (df["close"] > df[short_stop_col]) & is_lrsi_entry
-                exit_short_cradle = (df["close"] > df[short_cradle_stop_col]) & is_cradle_entry
-                exit_short_breakout = (df["close"] > df[short_breakout_stop_col]) & is_breakout_entry
+                exit_short_lrsi = (df["close"] > df[short_stop_col])
+                exit_short_cradle = (df["close"] > df[short_cradle_stop_col])
+                # exit_short_breakout = (df["close"] > df[short_breakout_stop_col]) & is_breakout_entry
 
                 # Apply exit conditions
-                df.loc[exit_long_lrsi | exit_long_cradle | exit_long_breakout, 'exit_long'] = 1
-                df.loc[exit_short_lrsi | exit_short_cradle | exit_short_breakout, 'exit_short'] = 1
+                df.loc[exit_long_lrsi | exit_long_cradle, 'exit_long'] = 1
+                df.loc[exit_short_lrsi | exit_short_cradle, 'exit_short'] = 1
 
                 return df
             except Exception as e_inner:
@@ -977,9 +974,10 @@ class FractalStrategy(IStrategy):
             last_candle = dataframe.iloc[-1].squeeze()
 
             # Get custom data from trade
+            default = 0 if not trade.is_short else float('inf')
             use_dynamic_stop = trade.get_custom_data(key="use_dynamic_stop", default=False)
-            dynamic_stop = trade.get_custom_data(key="dynamic_stop", default=None)
-            initial_stop_loss = trade.get_custom_data(key="initial_stop_loss", default=None)
+            dynamic_stop = trade.get_custom_data(key="dynamic_stop", default=default)
+            initial_stop_loss = trade.get_custom_data(key="initial_stop_loss", default=default)
 
             # For long positions
             if not trade.is_short:
@@ -1028,7 +1026,7 @@ class FractalStrategy(IStrategy):
         if entry_tag == "cradle":
             if side == "long":
                 raw_stop_price = last_candle.get("stop_lower")
-                stop_loss_price = raw_stop_price * 0.995
+                stop_loss_price = raw_stop_price * self.down_slippage
                 price_diff_to_stop = trade.open_rate - stop_loss_price
                 take_profit_price = trade.open_rate + price_diff_to_stop
                 take_profit_2_price = last_candle.get("long_target")
@@ -1036,7 +1034,7 @@ class FractalStrategy(IStrategy):
                     take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
             elif side == "short":
                 raw_stop_price = last_candle.get("stop_upper")
-                stop_loss_price = raw_stop_price * 1.005
+                stop_loss_price = raw_stop_price * self.up_slippage
                 price_diff_to_stop = stop_loss_price - trade.open_rate
                 take_profit_price = trade.open_rate - price_diff_to_stop
                 take_profit_2_price = last_candle.get("short_target")
@@ -1046,7 +1044,7 @@ class FractalStrategy(IStrategy):
         elif entry_tag == "breakout":
             if side == "long":
                 raw_stop_price = last_candle.get("close_minus_2atr")
-                stop_loss_price = raw_stop_price * 0.995
+                stop_loss_price = raw_stop_price * self.down_slippage
                 price_diff_to_stop = trade.open_rate - stop_loss_price
                 take_profit_price = trade.open_rate + price_diff_to_stop
                 take_profit_2_price = last_candle.get("long_target")
@@ -1054,7 +1052,7 @@ class FractalStrategy(IStrategy):
                     take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
             elif side == "short":
                 raw_stop_price = last_candle.get("close_plus_2atr")
-                stop_loss_price = raw_stop_price * 1.005
+                stop_loss_price = raw_stop_price * self.up_slippage
                 price_diff_to_stop = stop_loss_price - trade.open_rate
                 take_profit_price = trade.open_rate - price_diff_to_stop
                 take_profit_2_price = last_candle.get("short_target")
@@ -1064,7 +1062,7 @@ class FractalStrategy(IStrategy):
         else:  # Default to lrsi
             if side == "long":
                 raw_stop_price = last_candle.get("long_stop")
-                stop_loss_price = raw_stop_price * 0.995
+                stop_loss_price = raw_stop_price * self.down_slippage
                 price_diff_to_stop = trade.open_rate - stop_loss_price
                 take_profit_price = trade.open_rate + price_diff_to_stop
                 take_profit_2_price = last_candle.get("long_target")
@@ -1072,7 +1070,7 @@ class FractalStrategy(IStrategy):
                     take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
             elif side == "short":
                 raw_stop_price = last_candle.get("short_stop")
-                stop_loss_price = raw_stop_price * 1.005
+                stop_loss_price = raw_stop_price * self.up_slippage
                 price_diff_to_stop = stop_loss_price - trade.open_rate
                 take_profit_price = trade.open_rate - price_diff_to_stop
                 take_profit_2_price = last_candle.get("short_target")
@@ -1100,8 +1098,8 @@ class FractalStrategy(IStrategy):
             key="take_profit_2_price", value=take_profit_2_price
         )
         # Initialize dynamic stop with the initial stop loss for short positions
-        trade.set_custom_data(key="initial_stop", value=stop_loss_price)
-        trade.set_custom_data(key="dynamic_stop", value=stop_loss_price)
+        trade.set_custom_data(key="initial_stop", value=raw_stop_price)
+        trade.set_custom_data(key="dynamic_stop", value=raw_stop_price)
 
         return stop_loss_price
 
@@ -1166,9 +1164,9 @@ class FractalStrategy(IStrategy):
                     # Determine if stop level has changed
                     if entry_tag == "cradle":
                         if not trade.is_short:
-                            stop_changed = (last_candle.get("stop_lower", 0) * 0.995) != initial_stop
+                            stop_changed = (last_candle.get("stop_lower", 0)) != initial_stop
                         else:
-                            stop_changed = (last_candle.get("stop_upper", float("inf")) * 1.005) != initial_stop
+                            stop_changed = (last_candle.get("stop_upper", float("inf"))) != initial_stop
                     else: # breakout and lrsi
                         if not trade.is_short:
                             initial_trough = trade.get_custom_data(key="initial_trough")
@@ -1186,12 +1184,12 @@ class FractalStrategy(IStrategy):
                         use_dynamic_stop = True
 
                         # Debug logging for enabling dynamic stop
-                        # logger.debug(
-                        #     f"{current_time.strftime('%Y-%m-%d %H:%M')} Enabling dynamic stop for {pair} ({'short' if trade.is_short else 'long'}): "
-                        #     f"Profit: {current_profit:.2%}, "
-                        #     f"Stop changed: {stop_changed}"
-                        #     f"Price increased: {price_increased}, Price decreased: {price_decreased}"
-                        # )
+                        logger.debug(
+                            f"{current_time.strftime('%Y-%m-%d %H:%M')} Enabling dynamic stop for {pair} ({'short' if trade.is_short else 'long'}): "
+                            f"Profit: {current_profit:.2%}, "
+                            f"Stop changed: {stop_changed}"
+                            f"Price increased: {price_increased}, Price decreased: {price_decreased}"
+                        )
 
                 # For long positions
                 if not trade.is_short:
@@ -1212,7 +1210,6 @@ class FractalStrategy(IStrategy):
 
                     # Update dynamic stop if we're using dynamic stop and current stop is higher
                     if use_dynamic_stop and dynamic_stop is not None and current_stop > dynamic_stop:
-                        old_dynamic_stop = dynamic_stop
                         dynamic_stop = current_stop
                         trade.set_custom_data(key="dynamic_stop", value=dynamic_stop)
 
@@ -1226,7 +1223,7 @@ class FractalStrategy(IStrategy):
                     if use_dynamic_stop and dynamic_stop is not None:
                         # Use dynamic stop with ATR buffer
                         atr_stop_price = last_candle["close"] - trailing_atr
-                        stop_loss_price = max(dynamic_stop * 0.995, atr_stop_price)
+                        stop_loss_price = max(dynamic_stop * self.down_slippage, atr_stop_price)
 
                         # Debug logging for final stop calculation
                         # logger.debug(
@@ -1270,7 +1267,7 @@ class FractalStrategy(IStrategy):
                     if use_dynamic_stop and dynamic_stop is not None:
                         # Use dynamic stop with ATR buffer
                         atr_stop_price = last_candle["close"] + trailing_atr
-                        stop_loss_price = min(dynamic_stop * 1.005, atr_stop_price)
+                        stop_loss_price = min(dynamic_stop * self.up_slippage, atr_stop_price)
 
                         # Debug logging for final stop calculation
                         # logger.debug(
@@ -1296,14 +1293,15 @@ class FractalStrategy(IStrategy):
                 current_stop_loss = trade.stop_loss if trade.stop_loss else 0
 
                 # Check if the difference is significant (greater than epsilon)
-                stop_loss_changed = (abs(stop_loss_price - current_stop_loss) / current_stop_loss) > epsilon
+                change_ratio = abs(stop_loss_price - current_stop_loss) / current_stop_loss
+                stop_loss_changed = change_ratio > epsilon
 
                 if stop_loss_changed:
-                    logger.debug(
+                    logger.info(
                         f"{current_time.strftime('%Y-%m-%d %H:%M')} Stoploss update for {pair} "
                         f"({'short' if trade.is_short else 'long'}): "
                         f"price={stop_loss_price:.6f}, "
-                        f"percent={final_stoploss:.4%}"
+                        f"change={change_ratio:.4%}"
                     )
                 else:
                     return None
@@ -1429,7 +1427,7 @@ class FractalStrategy(IStrategy):
                         f"Leverage: stop_lower is np.nan for {pair} on {current_time}."
                     )
                     return 0.0  # Stop-loss level not found or np.nan
-                stop_loss_price = raw_stop_price * 0.995
+                stop_loss_price = raw_stop_price * self.down_slippage
                 if current_rate <= stop_loss_price:
                     return 0.0  # Invalid stop-loss for long
                 price_diff_to_stop = current_rate - stop_loss_price
@@ -1440,7 +1438,7 @@ class FractalStrategy(IStrategy):
                         f"Leverage: stop_upper is np.nan for {pair} on {current_time}."
                     )
                     return 0.0  # Stop-loss level not found or np.nan
-                stop_loss_price = raw_stop_price * 1.005
+                stop_loss_price = raw_stop_price * self.up_slippage
                 if current_rate >= stop_loss_price:
                     return 0.0  # Invalid stop-loss for short
                 price_diff_to_stop = stop_loss_price - current_rate
@@ -1452,7 +1450,7 @@ class FractalStrategy(IStrategy):
                         f"Leverage: close_minus_2atr is np.nan for {pair} on {current_time}."
                     )
                     return 0.0  # Stop-loss level not found or np.nan
-                stop_loss_price = raw_stop_price * 0.995
+                stop_loss_price = raw_stop_price * self.down_slippage
                 if current_rate <= stop_loss_price:
                     return 0.0  # Invalid stop-loss for long
                 price_diff_to_stop = current_rate - stop_loss_price
@@ -1463,7 +1461,7 @@ class FractalStrategy(IStrategy):
                         f"Leverage: close_plus_2atr is np.nan for {pair} on {current_time}."
                     )
                     return 0.0  # Stop-loss level not found or np.nan
-                stop_loss_price = raw_stop_price * 1.005
+                stop_loss_price = raw_stop_price * self.up_slippage
                 if current_rate >= stop_loss_price:
                     return 0.0  # Invalid stop-loss for short
                 price_diff_to_stop = stop_loss_price - current_rate
@@ -1475,7 +1473,7 @@ class FractalStrategy(IStrategy):
                         f"Leverage: long_stop is np.nan for {pair} on {current_time}."
                     )
                     return 0.0  # Stop-loss level not found or np.nan
-                stop_loss_price = raw_stop_price * 0.995
+                stop_loss_price = raw_stop_price * self.down_slippage
                 if current_rate <= stop_loss_price:
                     return 0.0  # Invalid stop-loss for long
                 price_diff_to_stop = current_rate - stop_loss_price
@@ -1486,7 +1484,7 @@ class FractalStrategy(IStrategy):
                         f"Leverage: short_stop is np.nan for {pair} on {current_time}."
                     )
                     return 0.0  # Stop-loss level not found or np.nan
-                stop_loss_price = raw_stop_price * 1.005
+                stop_loss_price = raw_stop_price * self.up_slippage
                 if current_rate >= stop_loss_price:
                     return 0.0  # Invalid stop-loss for short
                 price_diff_to_stop = stop_loss_price - current_rate
