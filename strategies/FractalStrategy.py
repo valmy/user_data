@@ -122,9 +122,11 @@ class FractalStrategy(IStrategy):
     startup_candle_count: int = int(max(50, 3 * ratio_major_to_signal))
 
     # Trigger type
-    trigger_type = CategoricalParameter(
-        ["lrsi", "cradle", "breakout"], default="lrsi", space="buy", optimize=False
-    )
+    use_lrsi_trigger = BooleanParameter(default=True, space="buy", optimize=False)
+    # Parameters for cradle convergence
+    use_cradle_trigger = BooleanParameter(default=True, space="buy", optimize=True)
+    convergence_window = IntParameter(3, 10, default=5, space="buy", optimize=True)
+    use_breakout_trigger = BooleanParameter(default=False, space="buy", optimize=False)
 
     # Parameters for tuning
     volume_threshold = DecimalParameter(
@@ -159,7 +161,7 @@ class FractalStrategy(IStrategy):
 
     # Custom trade size parameters
     max_risk_per_trade = DecimalParameter(
-        0.01, 0.05, default=0.02, decimals=3, space="buy", load=True, optimize=False
+        0.01, 0.05, default=0.02, decimals=2, space="buy", load=True, optimize=False
     )
 
     # Sell parameters
@@ -168,8 +170,14 @@ class FractalStrategy(IStrategy):
     )
 
     atr_stop_ratio = DecimalParameter(
-        0.05, 10.0, default=5.0, decimals=1, space="sell", load=True, optimize=True
+        0.05, 10.0, default=5.0, decimals=2, space="sell", load=True, optimize=True
     )
+
+    slippage = DecimalParameter(
+        0.001, 0.01, default=0.003, decimals=3, space="sell", load=True, optimize=True
+    )
+    down_slippage = 1 - slippage.value
+    up_slippage = 1 + slippage.value
 
     use_take_profit_2 = BooleanParameter(
         default=True, space="sell", optimize=True
@@ -224,6 +232,11 @@ class FractalStrategy(IStrategy):
         """
         Populate indicators for primary trend identification on primary_timeframe timeframe
         """
+
+        # Define confirmation ema
+        dataframe["ema10"] = ta.EMA(dataframe, timeperiod=10)
+        dataframe["ema20"] = ta.EMA(dataframe, timeperiod=20)
+
         # Donchian Channels (using 5-period window)
         # These are used for trend identification
         dataframe["donchian_upper"] = dataframe["high"].rolling(window=5).max()
@@ -466,6 +479,9 @@ class FractalStrategy(IStrategy):
             self.small_candle_ratio.value * dataframe["atr"]
         )
 
+        # MACD
+        dataframe.ta.macd(fast=12, slow=26, signal=9, append=True)
+
         # Donchian Channels (using 36-period window)
         major_period = round(3 * self.ratio_major_to_signal)
         primary_period = round(3 * self.ratio_primary_to_signal)
@@ -508,6 +524,7 @@ class FractalStrategy(IStrategy):
             # Initialize signal columns
             df["enter_long"] = 0
             df["enter_short"] = 0
+            df["enter_tag"] = ""
 
             # Calculate conditions with error handling
             try:
@@ -526,14 +543,8 @@ class FractalStrategy(IStrategy):
                 ptf_thresh_val = self.primary_chop_threshold.value
                 mtf_thresh_val = self.major_chop_threshold.value
 
-                # logger.debug(f"Primary chop ({ptf_chop_col}) dtype: {df[ptf_chop_col].dtype}, head: {df[ptf_chop_col].head(3).to_list()}, threshold: {ptf_thresh_val} (type: {type(ptf_thresh_val)})")
-                # logger.debug(f"Major chop ({mtf_chop_col}) dtype: {df[mtf_chop_col].dtype}, head: {df[mtf_chop_col].head(3).to_list()}, threshold: {mtf_thresh_val} (type: {type(mtf_thresh_val)})")
-
                 cond_ptf_chop = df[ptf_chop_col] > ptf_thresh_val
                 cond_mtf_chop = df[mtf_chop_col] > mtf_thresh_val
-
-                # logger.debug(f"cond_ptf_chop dtype: {cond_ptf_chop.dtype}, head: {cond_ptf_chop.head(3).to_list()}")
-                # logger.debug(f"cond_mtf_chop dtype: {cond_mtf_chop.dtype}, head: {cond_mtf_chop.head(3).to_list()}")
 
                 # --- Debugging ---
                 # Get the ha_upswing from the informative major timeframe
@@ -558,7 +569,6 @@ class FractalStrategy(IStrategy):
                 df["strong_volume"] = df["volume"] > (df["volume_mean"] * 1.5)
                 df["bullish_candle"] = df["close"] > df["open"]
                 df["bearish_candle"] = df["close"] < df["open"]
-                # df['above_ema20'] = df['close'] > df['ema20']
                 back_range = int(3 * self.ratio_primary_to_signal)
                 df["above_resistance"] = (
                     df["low"].rolling(window=back_range).min()
@@ -573,8 +583,7 @@ class FractalStrategy(IStrategy):
                 df["close_minus_2atr"] = df["close"] - 2 * df["atr"]
                 df["close_above_close_minus_2atr"] = df["close"] > df["close_minus_2atr"]
 
-                # RR ratio calculation, consider the donchian_upper in major timeframe as the target
-                # and trough in primary timeframe as the stop loss
+                # RR ratio calculation
                 df["long_rr_ratio"] = (
                     (df[f"donchian_upper_{self.major_timeframe}"] - df["close"])
                     / (df["close"] - df[f"trough_{self.primary_timeframe}"])
@@ -584,144 +593,202 @@ class FractalStrategy(IStrategy):
                     / (df[f"peak_{self.primary_timeframe}"] - df["close"])
                 )
 
-                # LONG Entry Conditions
-                long_rr_cond = (
-                    (df["long_rr_ratio"] >= self.rr_ratio.value)
-                    if self.trigger_type.value == "lrsi"
-                    else True
+                df["long_cradle_rr_ratio"] = (
+                    (df[f"donchian_upper_{self.major_timeframe}"] - df["high"])
+                    / (df["high"] - df["stop_lower"])
+                )
+                df["short_cradle_rr_ratio"] = (
+                    (df["low"] - df[f"donchian_lower_{self.major_timeframe}"])
+                    / (df["stop_upper"] - df["low"])
                 )
 
-                # --- Trigger conditions mapping ---
-                long_trigger_conditions = {
-                    "lrsi": (
-                        qtpylib.crossed_above(
-                            df["laguerre"], self.buy_laguerre_level.value
-                        )
-                    ),
-                    "cradle": (
-                        (df["in_cradle"].shift(1))
-                        & (df["ema20"] < df["ema10"])
-                        & (df["close"] > df["high"].shift(1))
-                        & (df["bullish_candle"].shift(1))
-                        & (df["bullish_candle"])
-                        & (df["small_candle"].shift(1))
-                    ),
-                    "breakout": (
-                        qtpylib.crossed_above(
-                            df["close"], df["donchian_upper"].shift(1)
-                        )
-                        & (df["bullish_candle"])
-                    ),
-                    # Add more trigger types here as needed
-                }
-                long_trigger_condition = long_trigger_conditions.get(
-                    self.trigger_type.value,
-                    pd.Series([False] * len(df), index=df.index)
+                # --- Trigger conditions ---
+                # LRSI Triggers
+                long_lrsi_trigger = qtpylib.crossed_above(df["laguerre"], self.buy_laguerre_level.value)
+                short_lrsi_trigger = qtpylib.crossed_below(df["laguerre"], self.sell_laguerre_level.value)
+
+                # Detect peaks and troughs in signal timeframe (5m)
+                # Peak: high is higher than previous and next candles
+                df["is_peak"] = (
+                    (df["high"] > df["high"].shift(1)) &
+                    (df["high"] > df["high"].shift(2)) &
+                    (df["high"] >= df["high"].shift(-1)) &
+                    (df["high"] >= df["high"].shift(-2))
                 )
 
-                short_trigger_conditions = {
-                    "lrsi": (
-                        qtpylib.crossed_below(
-                            df["laguerre"], self.sell_laguerre_level.value
-                        )
-                    ),
-                    "cradle": (
-                        (df["in_cradle"].shift(1))
-                        & (df["ema20"] > df["ema10"])
-                        & (df["close"] < df["low"].shift(1))
-                        & (df["bearish_candle"].shift(1))
-                        & (df["bearish_candle"])
-                        & (df["small_candle"].shift(1))
-                    ),
-                    "breakout": (
-                        qtpylib.crossed_below(
-                            df["close"], df["donchian_lower"].shift(1)
-                        )
-                        & (df["bearish_candle"])
-                    ),
-                    # Add more trigger types here as needed
-                }
-                short_trigger_condition = short_trigger_conditions.get(
-                    self.trigger_type.value,
-                    pd.Series([False] * len(df), index=df.index)
+                # Trough: low is lower than previous and next candles
+                df["is_trough"] = (
+                    (df["low"] < df["low"].shift(1)) &
+                    (df["low"] < df["low"].shift(2)) &
+                    (df["low"] <= df["low"].shift(-1)) &
+                    (df["low"] <= df["low"].shift(-2))
                 )
 
-                long_condition = (
-                    # signal: laguerre crosses above buy_laguerre_level
-                    long_trigger_condition
-                    &
-                    # at least 3 of the last 4 major heikin ashi candles are bullish
-                    df[ha_upswing_col]
-                    &
-                    # enough energy (using pre-calculated conditions)
-                    cond_ptf_chop
-                    & cond_mtf_chop
-                    &
-                    # confirmation: strong volume
-                    df["strong_volume"]
-                    &
-                    # df["above_resistance"]
-                    # &
-                    # small candle condition (to make sure the price action is not too volatile)
+                # Identify peak and trough values
+                df["peak_value"] = np.where(df["is_peak"], df["high"], np.nan)
+                df["peak_value"] = df["peak_value"].ffill()
+                df["trough_value"] = np.where(df["is_trough"], df["low"], np.nan)
+                df["trough_value"] = df["trough_value"].ffill()
+
+                # Identify increasing/decreasing peaks and troughs
+                # For peaks: compare current peak with previous peak
+                window = self.convergence_window.value
+                df["peak_increasing"] = df["peak_value"] > df["peak_value"].shift(window)
+                df["peak_decreasing"] = df["peak_value"] < df["peak_value"].shift(window)
+
+                # For troughs: compare current trough with previous trough
+                df["trough_increasing"] = df["trough_value"] > df["trough_value"].shift(window)
+                df["trough_decreasing"] = df["trough_value"] < df["trough_value"].shift(window)
+
+                # Identify MACD peaks and troughs
+                df["macd_peak"] = (
+                    (df["MACD_12_26_9"] > df["MACD_12_26_9"].shift(1)) &
+                    (df["MACD_12_26_9"] > df["MACD_12_26_9"].shift(2)) &
+                    (df["MACD_12_26_9"] >= df["MACD_12_26_9"].shift(-1)) &
+                    (df["MACD_12_26_9"] >= df["MACD_12_26_9"].shift(-2))
+                )
+
+                df["macd_trough"] = (
+                    (df["MACD_12_26_9"] < df["MACD_12_26_9"].shift(1)) &
+                    (df["MACD_12_26_9"] < df["MACD_12_26_9"].shift(2)) &
+                    (df["MACD_12_26_9"] <= df["MACD_12_26_9"].shift(-1)) &
+                    (df["MACD_12_26_9"] <= df["MACD_12_26_9"].shift(-2))
+                )
+
+                # Identify MACD peak and trough values
+                df["macd_peak_value"] = np.where(df["macd_peak"], df["MACD_12_26_9"], np.nan)
+                df["macd_peak_value"] = df["macd_peak_value"].ffill()
+                df["macd_trough_value"] = np.where(df["macd_trough"], df["MACD_12_26_9"], np.nan)
+                df["macd_trough_value"] = df["macd_trough_value"].ffill()
+
+                # Identify increasing/decreasing MACD peaks and troughs
+                # For MACD peaks: compare current peak with previous peak
+                df["macd_peak_increasing"] = df["macd_peak_value"] > df["macd_peak_value"].shift(window)
+                df["macd_peak_decreasing"] = df["macd_peak_value"] < df["macd_peak_value"].shift(window)
+
+                # For MACD troughs: compare current trough with previous trough
+                df["macd_trough_increasing"] = df["macd_trough_value"] > df["macd_trough_value"].shift(window)
+                df["macd_trough_decreasing"] = df["macd_trough_value"] < df["macd_trough_value"].shift(window)
+
+                # Cradle Triggers
+                long_cradle_base = (
+                    df["in_cradle"]
+                    & (df["ema20"] < df["ema10"])
+                    & (df[f"higher_high_{self.primary_timeframe}"])
+                    & (df[f"ema20_{self.primary_timeframe}"] < df[f"ema10_{self.primary_timeframe}"])
+                    & (df["bullish_candle"])
+                    & (df["small_candle"])
+                )
+
+                short_cradle_base = (
+                    df["in_cradle"]
+                    & (df["ema20"] > df["ema10"])
+                    & (df[f"lower_low_{self.primary_timeframe}"])
+                    & (df[f"ema20_{self.primary_timeframe}"] > df[f"ema10_{self.primary_timeframe}"])
+                    & (df["bearish_candle"])
+                    & (df["small_candle"])
+                )
+
+                # Additional condition: no candle in the previous window candles has highs below ema20 for long trades
+                # and no candle in the previous window candles has lows above ema20 for short trades
+                window = self.convergence_window.value
+                long_no_low_candles = True
+                short_no_high_candles = True
+
+                for i in range(1, window + 1):
+                    long_no_low_candles = long_no_low_candles & (df["high"].shift(i) >= df["ema20"].shift(i))
+                    short_no_high_candles = short_no_high_candles & (df["low"].shift(i) <= df["ema20"].shift(i))
+
+                long_cradle_base = long_cradle_base & long_no_low_candles
+                short_cradle_base = short_cradle_base & short_no_high_candles
+
+                # Cradle Triggers with convergence confirmation
+                long_cradle_trigger = long_cradle_base
+                short_cradle_trigger = short_cradle_base
+
+                # Apply convergence filter if enabled
+                if self.use_cradle_trigger.value:
+                    # For long entries, we want either:
+                    # 1. Price peaks increasing and MACD peaks increasing (bullish convergence)
+                    # 2. Price troughs increasing (bullish divergence)
+                    long_cradle_trigger = long_cradle_base & (
+                        df["peak_increasing"] & df["macd_peak_increasing"] & df["trough_increasing"]
+                    )
+
+                    # For short entries, we want either:
+                    # 1. Price peaks decreasing and MACD peaks decreasing (bearish convergence)
+                    # 2. Price troughs decreasing (bearish divergence)
+                    short_cradle_trigger = short_cradle_base & (
+                        df["peak_decreasing"] & df["macd_peak_decreasing"] & df["trough_decreasing"]
+                    )
+
+                # Breakout Triggers
+                long_breakout_trigger = (
+                    qtpylib.crossed_above(df["close"], df["donchian_upper"].shift(1))
+                    & (df["bullish_candle"])
+                )
+                short_breakout_trigger = (
+                    qtpylib.crossed_below(df["close"], df["donchian_lower"].shift(1))
+                    & (df["bearish_candle"])
+                )
+
+                # --- Base Entry Conditions (excluding triggers) ---
+                base_long_condition = (
+                    df[ha_upswing_col] &
+                    cond_mtf_chop &
+                    df["strong_volume"] &
                     df["small_candle"]
-                    &
-                    # RR ratio condition
-                    long_rr_cond
                 )
-
-                # SHORT Entry Conditions
-                short_rr_cond = (
-                    (df["short_rr_ratio"] >= self.rr_ratio.value)
-                    if self.trigger_type.value == 'lrsi'
-                    else True
-                )
-
-                short_condition = (
-                    # signal: laguerre crosses below sell_laguerre_level
-                    short_trigger_condition
-                    &
-                    # at least 3 of the last 4 major heikin ashi candles are bearish
-                    df[ha_downswing_col]
-                    &
-                    # enough energy
-                    cond_ptf_chop
-                    & cond_mtf_chop
-                    &
-                    # confirmation: strong volume
-                    df["strong_volume"]
-                    # &
-                    # df["below_support"]
-                    &
-                    # small candle condition
+                base_short_condition = (
+                    df[ha_downswing_col] &
+                    cond_mtf_chop &
+                    df["strong_volume"] &
                     df["small_candle"]
-                    &
-                    # RR ratio condition
-                    short_rr_cond
                 )
 
-                # Apply conditions with position sizing
-                df.loc[long_condition, "enter_long"] = 1
+                # --- Combine Triggers and Base Conditions ---
+                # Long Entries
+                if self.use_breakout_trigger.value:
+                    long_condition = base_long_condition & long_breakout_trigger
+                    df.loc[long_condition, ["enter_long", "enter_tag"]] = (1, "breakout")
 
+                # Use cradle trigger
+                if self.use_cradle_trigger.value:
+                    long_rr_cond = df["long_cradle_rr_ratio"] >= 1.0
+                    long_condition = base_long_condition & long_cradle_trigger & long_rr_cond
+                    df.loc[long_condition, ["enter_long", "enter_tag"]] = (1, "cradle")
+
+                if self.use_lrsi_trigger.value:
+                    long_rr_cond = df["long_rr_ratio"] >= self.rr_ratio.value
+                    long_condition = (base_long_condition
+                        & cond_ptf_chop
+                        & long_lrsi_trigger
+                        & long_rr_cond)
+                    df.loc[long_condition, ["enter_long", "enter_tag"]] = (1, "lrsi")
+
+                # Short Entries
                 if self.can_short:
-                    df.loc[short_condition, "enter_short"] = 1
+                    if self.use_breakout_trigger.value:
+                        short_condition = base_short_condition & short_breakout_trigger
+                        df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "breakout")
+
+                    # Use cradle trigger
+                    if self.use_cradle_trigger.value:
+                        short_rr_cond = df["short_cradle_rr_ratio"] >= 1.0
+                        short_condition = base_short_condition & short_cradle_trigger & short_rr_cond
+                        df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "cradle")
+
+                    if self.use_lrsi_trigger.value:
+                        short_rr_cond = df["short_rr_ratio"] >= self.rr_ratio.value
+                        short_condition = (base_short_condition
+                            & cond_ptf_chop
+                            & short_lrsi_trigger
+                            & short_rr_cond)
+                        df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "lrsi")
 
                 # Limit the number of signals to avoid over-trading
-                max_signals = len(df) // 30  # Max 1 signal per 30 candles
-
-                # For long signals
-                if sum(long_condition) > max_signals:
-                    long_signals = df[long_condition].index[-max_signals:]
-                    df["enter_long"] = 0
-                    df.loc[long_signals, "enter_long"] = 1
-
-                # For short signals
-                if self.can_short and sum(short_condition) > max_signals:
-                    short_signals = df[short_condition].index[-max_signals:]
-                    df["enter_short"] = 0
-                    df.loc[short_signals, "enter_short"] = 1
-
-                # Debug info
-                # logger.info(f"Generated {sum(df['enter_long'])} long and {sum(df['enter_short'])} short signals for {metadata['pair']}")
+                # This part might need adjustment if multiple signals can be generated in one candle
+                # For now, we assume the last trigger set wins, which is acceptable.
 
                 return df
 
@@ -756,28 +823,50 @@ class FractalStrategy(IStrategy):
             df["exit_short"] = 0
 
             try:
+                # Define stop loss columns for different entry types
                 long_stop_col = f"trough_{self.primary_timeframe}"
                 short_stop_col = f"peak_{self.primary_timeframe}"
 
-                if not all(
-                    col in df.columns for col in [long_stop_col, short_stop_col]
-                ):
+                # For cradle entries
+                long_cradle_stop_col = "stop_lower"
+                short_cradle_stop_col = "stop_upper"
+
+                # For breakout entries
+                long_breakout_stop_col = "close_minus_2atr"
+                short_breakout_stop_col = "close_plus_2atr"
+
+                missing_cols = []
+                required_cols = [long_stop_col, short_stop_col, long_cradle_stop_col,
+                                short_cradle_stop_col, long_breakout_stop_col, short_breakout_stop_col]
+
+                for col in required_cols:
+                    if col not in df.columns:
+                        missing_cols.append(col)
+
+                if missing_cols:
                     logger.error(
-                        f"Exit condition columns missing! "
-                        f"Long stop: {long_stop_col in df.columns}, "
-                        f"Short stop: {short_stop_col in df.columns}. All columns: {df.columns.to_list()}"
+                        f"Exit condition columns missing: {missing_cols}. All columns: {df.columns.to_list()}"
                     )
                     return df  # Return df with no exits
 
-                # Exit LONG positions based on price condition only
-                exit_long_condition = df["close"] < df[long_stop_col]
+                # Create conditions for different entry types
+                # is_lrsi_entry = df["current_enter_tag"] == "lrsi"
+                # is_cradle_entry = df["current_enter_tag"] == "cradle"
+                # is_breakout_entry = df["current_enter_tag"] == "breakout"
 
-                # Exit SHORT positions based on price condition only
-                exit_short_condition = df["close"] > df[short_stop_col]
+                # Exit LONG positions based on entry type
+                exit_long_lrsi = (df["close"] < df[long_stop_col])
+                exit_long_cradle = (df["close"] < df[long_cradle_stop_col])
+                # exit_long_breakout = (df["close"] < df[long_breakout_stop_col]) & is_breakout_entry
+
+                # Exit SHORT positions based on entry type
+                exit_short_lrsi = (df["close"] > df[short_stop_col])
+                exit_short_cradle = (df["close"] > df[short_cradle_stop_col])
+                # exit_short_breakout = (df["close"] > df[short_breakout_stop_col]) & is_breakout_entry
 
                 # Apply exit conditions
-                df.loc[exit_long_condition, 'exit_long'] = 1
-                df.loc[exit_short_condition, 'exit_short'] = 1
+                df.loc[exit_long_lrsi | exit_long_cradle, 'exit_long'] = 1
+                df.loc[exit_short_lrsi | exit_short_cradle, 'exit_short'] = 1
 
                 return df
             except Exception as e_inner:
@@ -799,6 +888,58 @@ class FractalStrategy(IStrategy):
             dataframe["exit_long"] = 0
             dataframe["exit_short"] = 0
             return dataframe
+
+    def confirm_trade_entry(
+        self,
+        pair: str,
+        order_type: str,
+        amount: float,
+        rate: float,
+        time_in_force: str,
+        current_time: datetime,
+        entry_tag: str | None,
+        side: str,
+        **kwargs,
+    ) -> bool:
+        """
+        Called right before placing a entry order.
+        Timing: Called after populate_entry_trend and before the entry order is placed.
+        """
+        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        if len(dataframe) < 2:
+            return False
+
+        last_candle = dataframe.iloc[-2]  # Previous candle
+
+        if entry_tag == 'cradle':
+            if side == "long":
+                if rate > last_candle['high']:
+                    return True
+            elif side == "short":
+                if rate < last_candle['low']:
+                    return True
+            return False
+
+        elif entry_tag == 'breakout':
+            if side == "long":
+                if rate > last_candle['close_minus_2atr']:
+                    return True
+            elif side == "short":
+                if rate < last_candle['close_plus_2atr']:
+                    return True
+            return False
+
+        else: # default to "lrsi"
+            if side == "long":
+                if rate > last_candle["long_stop"]:
+                    return True
+            elif side == "short":
+                if rate < last_candle["short_stop"]:
+                    return True
+
+            return False
+
+        return True
 
     def confirm_trade_exit(
         self,
@@ -833,9 +974,10 @@ class FractalStrategy(IStrategy):
             last_candle = dataframe.iloc[-1].squeeze()
 
             # Get custom data from trade
+            default = 0 if not trade.is_short else float('inf')
             use_dynamic_stop = trade.get_custom_data(key="use_dynamic_stop", default=False)
-            dynamic_stop = trade.get_custom_data(key="dynamic_stop", default=None)
-            initial_stop = trade.get_custom_data(key="initial_stop", default=None)
+            dynamic_stop = trade.get_custom_data(key="dynamic_stop", default=default)
+            initial_stop_loss = trade.get_custom_data(key="initial_stop_loss", default=default)
 
             # For long positions
             if not trade.is_short:
@@ -843,33 +985,11 @@ class FractalStrategy(IStrategy):
                 if use_dynamic_stop and dynamic_stop is not None:
                     # Allow exit only if close is below dynamic stop
                     if last_candle["close"] >= dynamic_stop:
-                        # logger.info(
-                        #     f"Preventing exit for {pair} (long) - "
-                        #     f"Close ({last_candle['close']:.6f}) >= "
-                        #     f"Dynamic Stop ({dynamic_stop:.6f})"
-                        # )
                         return False  # Prevent exit
-                    # else:
-                        # logger.info(
-                        #     f"Allowing exit for {pair} (long) - "
-                        #     f"Close ({last_candle['close']:.6f}) < "
-                        #     f"Dynamic Stop ({dynamic_stop:.6f})"
-                        # )
                 else:
-                    # Check against initial stop loss
-                    if last_candle["close"] >= initial_stop:
-                        # logger.info(
-                        #     f"Preventing exit for {pair} (long) - "
-                        #     f"Close ({last_candle['close']:.6f}) >= "
-                        #     f"Initial Stop ({initial_stop:.6f})"
-                        # )
+                    # Check against initial stop loss (all follows the trough)
+                    if last_candle["close"] >= initial_stop_loss:
                         return False  # Prevent exit
-                    # else:
-                        # logger.info(
-                        #     f"Allowing exit for {pair} (long) - "
-                        #     f"Close ({last_candle['close']:.6f}) < "
-                        #     f"Initial Stop ({initial_stop:.6f})"
-                        # )
 
             # For short positions
             else:
@@ -877,33 +997,11 @@ class FractalStrategy(IStrategy):
                 if use_dynamic_stop and dynamic_stop is not None:
                     # Allow exit only if close is above dynamic stop
                     if last_candle["close"] <= dynamic_stop:
-                        # logger.info(
-                        #     f"Preventing exit for {pair} (short) - "
-                        #     f"Close ({last_candle['close']:.6f}) <= "
-                        #     f"Dynamic Stop ({dynamic_stop:.6f})"
-                        # )
                         return False  # Prevent exit
-                    # else:
-                    #     logger.info(
-                    #         f"Allowing exit for {pair} (short) - "
-                    #         f"Close ({last_candle['close']:.6f}) > "
-                    #         f"Dynamic Stop ({dynamic_stop:.6f})"
-                    #     )
                 else:
-                    # Check against initial stop loss
-                    if last_candle["close"] <= initial_stop:
-                        # logger.info(
-                        #     f"Preventing exit for {pair} (short) - "
-                        #     f"Close ({last_candle['close']:.6f}) <= "
-                        #     f"Initial Stop ({initial_stop:.6f})"
-                        # )
+                    # Check against initial stop loss (all follows the peak)
+                    if last_candle["close"] <= initial_stop_loss:
                         return False  # Prevent exit
-                    # else:
-                        # logger.info(
-                        #     f"Allowing exit for {pair} (short) - "
-                        #     f"Close ({last_candle['close']:.6f}) > "
-                        #     f"Initial Stop ({initial_stop:.6f})"
-                        # )
 
             # If we get here, allow the exit
             return True
@@ -912,6 +1010,98 @@ class FractalStrategy(IStrategy):
             logger.error(f"Error in confirm_trade_exit: {str(e)}")
             # In case of error, allow the exit to proceed
             return True
+
+    def _set_trade_initial_values(self, trade: Trade, last_candle) -> float | None:
+        """
+        Calculate take profit levels based on entry type and trade side.
+        Returns tuple of (take_profit_price, take_profit_2_price) or None if invalid.
+        """
+        stop_loss_price = None
+        price_diff_to_stop = 0.0
+
+        side = "long" if not trade.is_short else "short"
+        entry_tag = trade.enter_tag if hasattr(trade, 'enter_tag') else 'lrsi'
+
+        # Determine stop loss and take profit levels based on entry type
+        if entry_tag == "cradle":
+            if side == "long":
+                raw_stop_price = last_candle.get("stop_lower")
+                stop_loss_price = raw_stop_price * self.down_slippage
+                price_diff_to_stop = trade.open_rate - stop_loss_price
+                take_profit_price = trade.open_rate + price_diff_to_stop
+                take_profit_2_price = last_candle.get("long_target")
+                if take_profit_2_price <= take_profit_price:
+                    take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
+            elif side == "short":
+                raw_stop_price = last_candle.get("stop_upper")
+                stop_loss_price = raw_stop_price * self.up_slippage
+                price_diff_to_stop = stop_loss_price - trade.open_rate
+                take_profit_price = trade.open_rate - price_diff_to_stop
+                take_profit_2_price = last_candle.get("short_target")
+                if take_profit_2_price >= take_profit_price:
+                    take_profit_2_price = trade.open_rate - 2 * price_diff_to_stop
+
+        elif entry_tag == "breakout":
+            if side == "long":
+                raw_stop_price = last_candle.get("close_minus_2atr")
+                stop_loss_price = raw_stop_price * self.down_slippage
+                price_diff_to_stop = trade.open_rate - stop_loss_price
+                take_profit_price = trade.open_rate + price_diff_to_stop
+                take_profit_2_price = last_candle.get("long_target")
+                if take_profit_2_price <= take_profit_price:
+                    take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
+            elif side == "short":
+                raw_stop_price = last_candle.get("close_plus_2atr")
+                stop_loss_price = raw_stop_price * self.up_slippage
+                price_diff_to_stop = stop_loss_price - trade.open_rate
+                take_profit_price = trade.open_rate - price_diff_to_stop
+                take_profit_2_price = last_candle.get("short_target")
+                if take_profit_2_price >= take_profit_price:
+                    take_profit_2_price = trade.open_rate - 2 * price_diff_to_stop
+
+        else:  # Default to lrsi
+            if side == "long":
+                raw_stop_price = last_candle.get("long_stop")
+                stop_loss_price = raw_stop_price * self.down_slippage
+                price_diff_to_stop = trade.open_rate - stop_loss_price
+                take_profit_price = trade.open_rate + price_diff_to_stop
+                take_profit_2_price = last_candle.get("long_target")
+                if take_profit_2_price <= take_profit_price:
+                    take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
+            elif side == "short":
+                raw_stop_price = last_candle.get("short_stop")
+                stop_loss_price = raw_stop_price * self.up_slippage
+                price_diff_to_stop = stop_loss_price - trade.open_rate
+                take_profit_price = trade.open_rate - price_diff_to_stop
+                take_profit_2_price = last_candle.get("short_target")
+                if take_profit_2_price >= take_profit_price:
+                    take_profit_2_price = trade.open_rate - 2 * price_diff_to_stop
+
+        if side == "long":
+            initial_trough = last_candle.get(f"trough_{self.primary_timeframe}")
+            trade.set_custom_data(key="initial_trough", value=initial_trough)
+        elif side == "short":
+            initial_peak = last_candle.get(f"peak_{self.primary_timeframe}")
+            trade.set_custom_data(key="initial_peak", value=initial_peak)
+        else:
+            logger.error(f"Order Filled: Invalid side '{side}' received.")
+            return None  # Should not happen
+
+        # Log the take profit price being set
+        logger.info(
+            f"Setting take_profit_price={take_profit_price} for {trade.pair}, "
+            f"take_profit_2={take_profit_2_price}, "
+            f"stop_loss={stop_loss_price:.6f}"
+        )
+        trade.set_custom_data(key="take_profit_price", value=take_profit_price)
+        trade.set_custom_data(
+            key="take_profit_2_price", value=take_profit_2_price
+        )
+        # Initialize dynamic stop with the initial stop loss for short positions
+        trade.set_custom_data(key="initial_stop", value=raw_stop_price)
+        trade.set_custom_data(key="dynamic_stop", value=raw_stop_price)
+
+        return stop_loss_price
 
     def custom_stoploss(
         self,
@@ -939,12 +1129,8 @@ class FractalStrategy(IStrategy):
             # Get the last candle
             last_candle = dataframe.iloc[-1].squeeze()
 
-            # logger.debug(
-            #     f"OHLC for {pair} at {current_time.strftime('%Y-%m-%d %H:%M')}: "
-            #     f"O: {last_candle['open']:.6f}, H: {last_candle['high']:.6f}, "
-            #     f"L: {last_candle['low']:.6f}, C: {last_candle['close']:.6f}, "
-            #     f"Peak: {last_candle.get('peak_15m', 0):.6f}, Trough: {last_candle.get('trough_15m', 0):.6f}"
-            # )
+            # Get the entry tag to determine stop loss method
+            entry_tag = trade.enter_tag if hasattr(trade, 'enter_tag') else 'lrsi'
 
             take_profit_reduced = trade.get_custom_data(
                 key="take_profit_reduced", default=False
@@ -958,23 +1144,9 @@ class FractalStrategy(IStrategy):
             # Only initialize stop loss in custom_stoploss if it hasn't been set yet
             # (i.e., if order_filled didn't run or didn't set the values)
             if after_fill and not take_profit_reduced and initial_stop is None:
-                # If after fill and take profit not reduced, set stop loss to 0.2% below trough
-                if not trade.is_short:
-                    stop_loss_price = last_candle.get("long_stop", 0) * 0.995
-                    # Initialize dynamic stop with the initial stop loss for long positions
-                    trade.set_custom_data(key="initial_stop", value=stop_loss_price)
-                    trade.set_custom_data(key="dynamic_stop", value=stop_loss_price)
-                else:
-                    stop_loss_price = last_candle.get("short_stop", float("inf")) * 1.005
-                    # Initialize dynamic stop with the initial stop loss for short positions
-                    trade.set_custom_data(key="initial_stop", value=stop_loss_price)
-                    trade.set_custom_data(key="dynamic_stop", value=stop_loss_price)
-
-                # Debug logging for initial setup
-                # logger.debug(
-                #     f"{current_time.strftime('%Y-%m-%d %H:%M')} Trade initialized for {pair} ({'short' if trade.is_short else 'long'}): "
-                #     f"Initial stop set to {stop_loss_price:.6f}, use_dynamic_stop={use_dynamic_stop}"
-                # )
+                stop_loss_price = self._set_trade_initial_values(
+                    trade, last_candle
+                )
 
             # If we're not after fill or the stop loss is already initialized, proceed with normal logic
             if not after_fill or initial_stop is not None:
@@ -988,43 +1160,57 @@ class FractalStrategy(IStrategy):
                     price_increased = (not trade.is_short and last_candle["high"] >= trade.open_rate + 2 * last_candle['atr'])
                     price_decreased = (trade.is_short and last_candle["low"] <= trade.open_rate - 2 * last_candle['atr'])
                     # time_since_entry = (current_time - trade.open_date).total_seconds() / 60  # minutes
-                    trough_changed = (not trade.is_short and
-                                    (last_candle.get(f"trough_{self.primary_timeframe}", 0) * 0.995) != initial_stop)
-                    peak_changed = (trade.is_short and
-                                  (last_candle.get(f"peak_{self.primary_timeframe}", float("inf")) * 1.005) != initial_stop)
+
+                    # Determine if stop level has changed
+                    if entry_tag == "cradle":
+                        if not trade.is_short:
+                            stop_changed = (last_candle.get("stop_lower", 0)) != initial_stop
+                        else:
+                            stop_changed = (last_candle.get("stop_upper", float("inf"))) != initial_stop
+                    else: # breakout and lrsi
+                        if not trade.is_short:
+                            initial_trough = trade.get_custom_data(key="initial_trough")
+                            stop_changed = (last_candle.get(f"trough_{self.primary_timeframe}", 0) != initial_trough)
+                        else:
+                            initial_peak = trade.get_custom_data(key="initial_peak")
+                            stop_changed = (last_candle.get(f"peak_{self.primary_timeframe}", float("inf")) != initial_peak)
 
                     if (price_increased or price_decreased or  # profit
-                        trough_changed or peak_changed):
+                        stop_changed):
                         # logger.debug(f"Enabling dynamic stop for {pair} ({'short' if trade.is_short else 'long'}): "
                         #       f"Profit: {current_profit:.2%}, "
-                        #       f"Trough changed: {trough_changed}, Peak changed: {peak_changed}")
+                        #       f"Stop changed: {stop_changed}")
                         trade.set_custom_data(key="use_dynamic_stop", value=True)
                         use_dynamic_stop = True
 
                         # Debug logging for enabling dynamic stop
-                        # logger.debug(
-                        #     f"{current_time.strftime('%Y-%m-%d %H:%M')} Enabling dynamic stop for {pair} ({'short' if trade.is_short else 'long'}): "
-                        #     f"Profit: {current_profit:.2%}, "
-                        #     f"Trough changed: {trough_changed}, Peak changed: {peak_changed}"
-                        #     f"Price increased: {price_increased}, Price decreased: {price_decreased}"
-                        # )
+                        logger.debug(
+                            f"{current_time.strftime('%Y-%m-%d %H:%M')} Enabling dynamic stop for {pair} ({'short' if trade.is_short else 'long'}): "
+                            f"Profit: {current_profit:.2%}, "
+                            f"Stop changed: {stop_changed}"
+                            f"Price increased: {price_increased}, Price decreased: {price_decreased}"
+                        )
 
                 # For long positions
                 if not trade.is_short:
-                    # Get the current trough value on primary timeframe
-                    current_trough = last_candle.get(f"trough_{self.primary_timeframe}", 0)
+                    # Get the current stop value based on entry type
+                    if entry_tag == "cradle":
+                        current_stop = last_candle.get("stop_lower", 0)
+                    elif entry_tag == "breakout":
+                        current_stop = last_candle.get("close_minus_2atr", 0)
+                    else:  # Default to lrsi
+                        current_stop = last_candle.get(f"trough_{self.primary_timeframe}", 0)
 
                     # Debug logging for current values
                     # logger.debug(
-                    #     f"Long position {pair}: Current trough={current_trough:.6f}, "
+                    #     f"Long position {pair}: Current stop={current_stop:.6f}, "
                     #     f"Dynamic stop={dynamic_stop}, Initial stop={initial_stop}, "
                     #     f"Use dynamic={use_dynamic_stop}"
                     # )
 
-                    # Update dynamic stop if we're using dynamic stop and current trough is higher
-                    if use_dynamic_stop and dynamic_stop is not None and current_trough > dynamic_stop:
-                        old_dynamic_stop = dynamic_stop
-                        dynamic_stop = current_trough
+                    # Update dynamic stop if we're using dynamic stop and current stop is higher
+                    if use_dynamic_stop and dynamic_stop is not None and current_stop > dynamic_stop:
+                        dynamic_stop = current_stop
                         trade.set_custom_data(key="dynamic_stop", value=dynamic_stop)
 
                         # Debug logging for dynamic stop update
@@ -1037,7 +1223,7 @@ class FractalStrategy(IStrategy):
                     if use_dynamic_stop and dynamic_stop is not None:
                         # Use dynamic stop with ATR buffer
                         atr_stop_price = last_candle["close"] - trailing_atr
-                        stop_loss_price = max(dynamic_stop * 0.995, atr_stop_price)
+                        stop_loss_price = max(dynamic_stop * self.down_slippage, atr_stop_price)
 
                         # Debug logging for final stop calculation
                         # logger.debug(
@@ -1050,20 +1236,25 @@ class FractalStrategy(IStrategy):
 
                 # For short positions
                 else:
-                    # Get the current peak value on primary timeframe
-                    current_peak = last_candle.get(f"peak_{self.primary_timeframe}", float("inf"))
+                    # Get the current stop value based on entry type
+                    if entry_tag == "cradle":
+                        current_stop = last_candle.get("stop_upper", float("inf"))
+                    elif entry_tag == "breakout":
+                        current_stop = last_candle.get("close_plus_2atr", float("inf"))
+                    else:  # Default to lrsi
+                        current_stop = last_candle.get(f"peak_{self.primary_timeframe}", float("inf"))
 
                     # Debug logging for current values
                     # logger.debug(
-                    #     f"Short position {pair}: Current peak={current_peak:.6f}, "
+                    #     f"Short position {pair}: Current stop={current_stop:.6f}, "
                     #     f"Dynamic stop={dynamic_stop}, Initial stop={initial_stop}, "
                     #     f"Use dynamic={use_dynamic_stop}"
                     # )
 
-                    # Update dynamic stop if we're using dynamic stop and current peak is lower
-                    if use_dynamic_stop and dynamic_stop is not None and current_peak < dynamic_stop:
+                    # Update dynamic stop if we're using dynamic stop and current stop is lower
+                    if use_dynamic_stop and dynamic_stop is not None and current_stop < dynamic_stop:
                         # old_dynamic_stop = dynamic_stop
-                        dynamic_stop = current_peak
+                        dynamic_stop = current_stop
                         trade.set_custom_data(key="dynamic_stop", value=dynamic_stop)
 
                         # Debug logging for dynamic stop update
@@ -1076,7 +1267,7 @@ class FractalStrategy(IStrategy):
                     if use_dynamic_stop and dynamic_stop is not None:
                         # Use dynamic stop with ATR buffer
                         atr_stop_price = last_candle["close"] + trailing_atr
-                        stop_loss_price = min(dynamic_stop * 1.005, atr_stop_price)
+                        stop_loss_price = min(dynamic_stop * self.up_slippage, atr_stop_price)
 
                         # Debug logging for final stop calculation
                         # logger.debug(
@@ -1102,16 +1293,17 @@ class FractalStrategy(IStrategy):
                 current_stop_loss = trade.stop_loss if trade.stop_loss else 0
 
                 # Check if the difference is significant (greater than epsilon)
-                stop_loss_changed = (abs(stop_loss_price - current_stop_loss) / current_stop_loss) > epsilon
+                change_ratio = abs(stop_loss_price - current_stop_loss) / current_stop_loss
+                stop_loss_changed = change_ratio > epsilon
 
-                if not stop_loss_changed:
-                    # logger.debug(
-                    #     f"{current_time.strftime('%Y-%m-%d %H:%M')} Stoploss update for {pair} "
-                    #     f"({'short' if trade.is_short else 'long'}): "
-                    #     f"price={stop_loss_price:.6f}, "
-                    #     f"percent={final_stoploss:.4%}"
-                    # )
-                # else:
+                if stop_loss_changed:
+                    logger.info(
+                        f"{current_time.strftime('%Y-%m-%d %H:%M')} Stoploss update for {pair} "
+                        f"({'short' if trade.is_short else 'long'}): "
+                        f"price={stop_loss_price:.6f}, "
+                        f"change={change_ratio:.4%}"
+                    )
+                else:
                     return None
 
                 return final_stoploss
@@ -1191,12 +1383,13 @@ class FractalStrategy(IStrategy):
         proposed_leverage: float,
         max_leverage: float,
         side: str,
+        entry_tag: str | None = None,
         **kwargs,
     ) -> float:
         """
         Calculate leverage based on maximum risk per trade.
-        The goal is to size the position such that if the stop-loss (trough_15m or peak_15m)
-        is hit, the loss is no more than max_risk_per_trade of total equity.
+        The goal is to size the position such that if the stop-loss is hit,
+        the loss is no more than max_risk_per_trade of total equity.
 
         - Sets the maximum risk as a modifiable constant (max_risk_per_trade).
         - Risk in stake currency is (total_equity * max_risk_per_trade).
@@ -1225,29 +1418,78 @@ class FractalStrategy(IStrategy):
         stop_loss_price = None
         price_diff_to_stop = 0.0
 
-        if side == "long":
-            raw_stop_price = last_candle.get("long_stop")
-            if pd.isna(raw_stop_price):
-                logger.warning(
-                    f"Leverage: long_stop is NaN for {pair} on {current_time}."
-                )
-                return 0.0  # Stop-loss level not found or NaN
-            stop_loss_price = raw_stop_price * 0.995
-            if current_rate <= stop_loss_price:
-                return 0.0  # Invalid stop-loss for long
-            price_diff_to_stop = current_rate - stop_loss_price
-        elif side == "short":
-            raw_stop_price = last_candle.get("short_stop")
-            if pd.isna(raw_stop_price):
-                logger.warning(
-                    f"Leverage: short_stop is NaN for {pair} on {current_time}."
-                )
-                return 0.0  # Stop-loss level not found or NaN
-            stop_loss_price = raw_stop_price * 1.005
-            if current_rate >= stop_loss_price:
-                return 0.0  # Invalid stop-loss for short
-            price_diff_to_stop = stop_loss_price - current_rate
-        else:
+        # Determine stop loss based on entry type
+        if entry_tag == "cradle":
+            if side == "long":
+                raw_stop_price = last_candle.get("stop_lower")
+                if pd.isna(raw_stop_price):
+                    logger.warning(
+                        f"Leverage: stop_lower is np.nan for {pair} on {current_time}."
+                    )
+                    return 0.0  # Stop-loss level not found or np.nan
+                stop_loss_price = raw_stop_price * self.down_slippage
+                if current_rate <= stop_loss_price:
+                    return 0.0  # Invalid stop-loss for long
+                price_diff_to_stop = current_rate - stop_loss_price
+            elif side == "short":
+                raw_stop_price = last_candle.get("stop_upper")
+                if pd.isna(raw_stop_price):
+                    logger.warning(
+                        f"Leverage: stop_upper is np.nan for {pair} on {current_time}."
+                    )
+                    return 0.0  # Stop-loss level not found or np.nan
+                stop_loss_price = raw_stop_price * self.up_slippage
+                if current_rate >= stop_loss_price:
+                    return 0.0  # Invalid stop-loss for short
+                price_diff_to_stop = stop_loss_price - current_rate
+        elif entry_tag == "breakout":
+            if side == "long":
+                raw_stop_price = last_candle.get("close_minus_2atr")
+                if pd.isna(raw_stop_price):
+                    logger.warning(
+                        f"Leverage: close_minus_2atr is np.nan for {pair} on {current_time}."
+                    )
+                    return 0.0  # Stop-loss level not found or np.nan
+                stop_loss_price = raw_stop_price * self.down_slippage
+                if current_rate <= stop_loss_price:
+                    return 0.0  # Invalid stop-loss for long
+                price_diff_to_stop = current_rate - stop_loss_price
+            elif side == "short":
+                raw_stop_price = last_candle.get("close_plus_2atr")
+                if pd.isna(raw_stop_price):
+                    logger.warning(
+                        f"Leverage: close_plus_2atr is np.nan for {pair} on {current_time}."
+                    )
+                    return 0.0  # Stop-loss level not found or np.nan
+                stop_loss_price = raw_stop_price * self.up_slippage
+                if current_rate >= stop_loss_price:
+                    return 0.0  # Invalid stop-loss for short
+                price_diff_to_stop = stop_loss_price - current_rate
+        else:  # Default to lrsi stop loss (or any other entry type)
+            if side == "long":
+                raw_stop_price = last_candle.get("long_stop")
+                if pd.isna(raw_stop_price):
+                    logger.warning(
+                        f"Leverage: long_stop is np.nan for {pair} on {current_time}."
+                    )
+                    return 0.0  # Stop-loss level not found or np.nan
+                stop_loss_price = raw_stop_price * self.down_slippage
+                if current_rate <= stop_loss_price:
+                    return 0.0  # Invalid stop-loss for long
+                price_diff_to_stop = current_rate - stop_loss_price
+            elif side == "short":
+                raw_stop_price = last_candle.get("short_stop")
+                if pd.isna(raw_stop_price):
+                    logger.warning(
+                        f"Leverage: short_stop is np.nan for {pair} on {current_time}."
+                    )
+                    return 0.0  # Stop-loss level not found or np.nan
+                stop_loss_price = raw_stop_price * self.up_slippage
+                if current_rate >= stop_loss_price:
+                    return 0.0  # Invalid stop-loss for short
+                price_diff_to_stop = stop_loss_price - current_rate
+
+        if side not in ["long", "short"]:
             logger.error(f"Leverage: Invalid side '{side}' received.")
             return 0.0  # Should not happen
 
@@ -1314,39 +1556,9 @@ class FractalStrategy(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
-        stop_loss_price = None
-        price_diff_to_stop = 0.0
-
-        side = "long" if not trade.is_short else "short"
-
-        if side == "long":
-            raw_stop_price = last_candle.get("long_stop")
-            stop_loss_price = raw_stop_price * 0.995
-            price_diff_to_stop = trade.open_rate - stop_loss_price
-            take_profit_price = trade.open_rate + price_diff_to_stop
-            take_profit_2_price = last_candle.get("long_target")
-            if take_profit_2_price <= take_profit_price:
-                take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
-        elif side == "short":
-            raw_stop_price = last_candle.get("short_stop")
-            stop_loss_price = raw_stop_price * 1.005
-            price_diff_to_stop = stop_loss_price - trade.open_rate
-            take_profit_price = trade.open_rate - price_diff_to_stop
-            take_profit_2_price = last_candle.get("short_target")
-            if take_profit_2_price >= take_profit_price:
-                take_profit_2_price = trade.open_rate - 2 * price_diff_to_stop
-        else:
-            logger.error(f"Order Filled: Invalid side '{side}' received.")
-            return None  # Should not happen
-
-        # Log the take profit price being set
-        logger.info(
-            f"Setting take_profit_price={take_profit_price} for {pair}, "
-            f"tp2={take_profit_2_price}"
-        )
-        trade.set_custom_data(key="take_profit_price", value=take_profit_price)
-        trade.set_custom_data(
-            key="take_profit_2_price", value=take_profit_2_price
+        # Calculate take profit levels based on entry type
+        self._set_trade_initial_values(
+            trade, last_candle
         )
 
         return None
@@ -1391,7 +1603,7 @@ class FractalStrategy(IStrategy):
         )
         take_profit_2_reduced = trade.get_custom_data(
             key="take_profit_2_reduced", default=False
-        ) if self.use_take_profit_2.value else True
+        ) if self.use_take_profit_2.value and trade.enter_tag == "lrsi" else True
 
         # Check if we've reached take profit price and haven't reduced position yet
         # For long positions: current_rate >= take_profit_price
@@ -1420,22 +1632,22 @@ class FractalStrategy(IStrategy):
             reduction_stake_amount = -0.5 * trade.stake_amount
 
             # Calculate expected amount to be exited for validation
-            expected_exit_amount = (
-                abs(reduction_stake_amount) * trade.amount / trade.stake_amount
-            )
-            expected_exit_percentage = (expected_exit_amount / trade.amount) * 100
+            # expected_exit_amount = (
+            #     abs(reduction_stake_amount) * trade.amount / trade.stake_amount
+            # )
+            # expected_exit_percentage = (expected_exit_amount / trade.amount) * 100
 
-            logger.debug(f"Position reduction calculation for {trade.pair}:")
-            logger.debug(
-                f"  Current position: {trade.amount:.8f} {trade.base_currency}"
-            )
-            logger.debug(
-                f"  Current stake: {trade.stake_amount:.6f} {trade.stake_currency}"
-            )
-            logger.debug(f"  Reduction stake amount: {reduction_stake_amount:.6f}")
-            logger.debug(
-                f"  Expected exit amount: {expected_exit_amount:.8f} ({expected_exit_percentage:.1f}%)"
-            )
+            # logger.debug(f"Position reduction calculation for {trade.pair}:")
+            # logger.debug(
+            #     f"  Current position: {trade.amount:.8f} {trade.base_currency}"
+            # )
+            # logger.debug(
+            #     f"  Current stake: {trade.stake_amount:.6f} {trade.stake_currency}"
+            # )
+            # logger.debug(f"  Reduction stake amount: {reduction_stake_amount:.6f}")
+            # logger.debug(
+            #     f"  Expected exit amount: {expected_exit_amount:.8f} ({expected_exit_percentage:.1f}%)"
+            # )
 
             return reduction_stake_amount
 
@@ -1461,22 +1673,23 @@ class FractalStrategy(IStrategy):
             reduction_stake_amount = -0.6 * trade.stake_amount
 
             # Calculate expected amount to be exited for validation
-            expected_exit_amount = (
-                abs(reduction_stake_amount) * trade.amount / trade.stake_amount
-            )
-            expected_exit_percentage = (expected_exit_amount / trade.amount) * 100
+            # expected_exit_amount = (
+            #     abs(reduction_stake_amount) * trade.amount / trade.stake_amount
+            # )
 
-            logger.debug(f"Position reduction calculation for {trade.pair}:")
-            logger.debug(
-                f"  Current position: {trade.amount:.8f} {trade.base_currency}"
-            )
-            logger.debug(
-                f"  Current stake: {trade.stake_amount:.6f} {trade.stake_currency}"
-            )
-            logger.debug(f"  Reduction stake amount: {reduction_stake_amount:.6f}")
-            logger.debug(
-                f"  Expected exit amount: {expected_exit_amount:.8f} ({expected_exit_percentage:.1f}%)"
-            )
+            # expected_exit_percentage = (expected_exit_amount / trade.amount) * 100
+
+            # logger.debug(f"Position reduction calculation for {trade.pair}:")
+            # logger.debug(
+            #     f"  Current position: {trade.amount:.8f} {trade.base_currency}"
+            # )
+            # logger.debug(
+            #     f"  Current stake: {trade.stake_amount:.6f} {trade.stake_currency}"
+            # )
+            # logger.debug(f"  Reduction stake amount: {reduction_stake_amount:.6f}")
+            # logger.debug(
+            #     f"  Expected exit amount: {expected_exit_amount:.8f} ({expected_exit_percentage:.1f}%)"
+            # )
 
             return reduction_stake_amount
 
