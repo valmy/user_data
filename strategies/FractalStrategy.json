@@ -22,21 +22,21 @@
       "use_breakout_trigger": false,
       "use_lrsi_trigger": true,
       "convergence_window": 8,
-      "primary_chop_threshold": 42,
+      "primary_chop_threshold": 48,
       "rr_ratio": 3.1,
-      "small_candle_ratio": 3.4,
+      "small_candle_ratio": 3.6,
       "use_cradle_trigger": false,
-      "volume_threshold": 2.9
+      "volume_threshold": 3.3
     },
     "sell": {
       "sell_laguerre_level": 0.8,
-      "atr_stop_ratio": 5.44,
-      "slippage": 0.001,
-      "trailing_stop_ratio": 0.44,
+      "atr_stop_ratio": 8.15,
+      "slippage": 0.002,
+      "trailing_stop_ratio": 0.24,
       "use_take_profit_2": false
     },
     "protection": {}
   },
   "ft_stratparam_v": 1,
-  "export_time": "2025-08-02 18:44:53.044004+00:00"
+  "export_time": "2025-08-02 20:54:46.132190+00:00"
 }
