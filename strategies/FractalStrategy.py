@@ -1014,7 +1014,8 @@ class FractalStrategy(IStrategy):
     def _set_trade_initial_values(self, trade: Trade, last_candle) -> float | None:
         """
         Calculate take profit levels based on entry type and trade side.
-        Returns tuple of (take_profit_price, take_profit_2_price) or None if invalid.
+        Calculate the initial stop loss price
+        Returns None
         """
         stop_loss_price = None
         price_diff_to_stop = 0.0
@@ -1100,8 +1101,9 @@ class FractalStrategy(IStrategy):
         # Initialize dynamic stop with the initial stop loss for short positions
         trade.set_custom_data(key="initial_stop", value=raw_stop_price)
         trade.set_custom_data(key="dynamic_stop", value=raw_stop_price)
+        trade.set_custom_data(key="initial_hard_stop", value=stop_loss_price)
 
-        return stop_loss_price
+        return None
 
     def custom_stoploss(
         self,
@@ -1138,15 +1140,24 @@ class FractalStrategy(IStrategy):
 
             # Get the dynamic stop and initial stop from trade custom data
             dynamic_stop = trade.get_custom_data(key="dynamic_stop", default=None)
+            old_dynamic_stop = dynamic_stop
             initial_stop = trade.get_custom_data(key="initial_stop", default=None)
             use_dynamic_stop = trade.get_custom_data(key="use_dynamic_stop", default=False)
+            stop_loss_price = trade.stop_loss
 
             # Only initialize stop loss in custom_stoploss if it hasn't been set yet
-            # (i.e., if order_filled didn't run or didn't set the values)
-            if after_fill and not take_profit_reduced and initial_stop is None:
-                stop_loss_price = self._set_trade_initial_values(
-                    trade, last_candle
-                )
+            if after_fill and not take_profit_reduced:
+                stop_loss_price = trade.get_custom_data(key="initial_hard_stop", default=None)
+
+                if stop_loss_price is not None:
+                    # Sets initial stop loss here
+                    final_stoploss = stoploss_from_absolute(
+                        stop_loss_price,
+                        current_rate,
+                        is_short=trade.is_short,
+                        leverage=trade.leverage,
+                    )
+                    return final_stoploss
 
             # If we're not after fill or the stop loss is already initialized, proceed with normal logic
             if not after_fill or initial_stop is not None:
@@ -1157,9 +1168,10 @@ class FractalStrategy(IStrategy):
                 # 1. Price has increased or decreased by 2x ATR
                 # 2. Or the trough/peak has moved from its initial value
                 if not use_dynamic_stop:
-                    price_increased = (not trade.is_short and last_candle["high"] >= trade.open_rate + 2 * last_candle['atr'])
-                    price_decreased = (trade.is_short and last_candle["low"] <= trade.open_rate - 2 * last_candle['atr'])
-                    # time_since_entry = (current_time - trade.open_date).total_seconds() / 60  # minutes
+                    price_increased = (not trade.is_short and last_candle["high"] >=
+                                       (trade.open_rate + 2 * last_candle['atr']))
+                    price_decreased = (trade.is_short and last_candle["low"] <=
+                                       (trade.open_rate - 2 * last_candle['atr']))
 
                     # Determine if stop level has changed
                     if entry_tag == "cradle":
@@ -1183,12 +1195,30 @@ class FractalStrategy(IStrategy):
                         trade.set_custom_data(key="use_dynamic_stop", value=True)
                         use_dynamic_stop = True
 
+                        # Calculate time elapsed since trade entry
+                        time_elapsed = current_time - trade.open_date_utc
+                        total_seconds = int(time_elapsed.total_seconds())
+                        hours = total_seconds // 3600
+                        minutes = (total_seconds % 3600) // 60
+                        seconds = total_seconds % 60
+
+                        # Format time elapsed as human-readable string
+                        if hours > 0:
+                            time_elapsed_str = f"{hours}h {minutes}m"
+                        elif minutes > 0:
+                            time_elapsed_str = f"{minutes}m {seconds}s"
+                        else:
+                            time_elapsed_str = f"{seconds}s"
+
                         # Debug logging for enabling dynamic stop
                         logger.debug(
-                            f"{current_time.strftime('%Y-%m-%d %H:%M')} Enabling dynamic stop for {pair} ({'short' if trade.is_short else 'long'}): "
+                            f"{current_time.strftime('%Y-%m-%d %H:%M')} Enabling dynamic stop for "
+                            f"{pair} ({'short' if trade.is_short else 'long'}): "
                             f"Profit: {current_profit:.2%}, "
-                            f"Stop changed: {stop_changed}"
-                            f"Price increased: {price_increased}, Price decreased: {price_decreased}"
+                            f"Time elapsed: {time_elapsed_str}, "
+                            f"Stop changed: {stop_changed} "
+                            f"Price increased: {price_increased}, "
+                            f"Price decreased: {price_decreased}"
                         )
 
                 # For long positions
@@ -1201,23 +1231,10 @@ class FractalStrategy(IStrategy):
                     else:  # Default to lrsi
                         current_stop = last_candle.get(f"trough_{self.primary_timeframe}", 0)
 
-                    # Debug logging for current values
-                    # logger.debug(
-                    #     f"Long position {pair}: Current stop={current_stop:.6f}, "
-                    #     f"Dynamic stop={dynamic_stop}, Initial stop={initial_stop}, "
-                    #     f"Use dynamic={use_dynamic_stop}"
-                    # )
-
                     # Update dynamic stop if we're using dynamic stop and current stop is higher
                     if use_dynamic_stop and dynamic_stop is not None and current_stop > dynamic_stop:
                         dynamic_stop = current_stop
                         trade.set_custom_data(key="dynamic_stop", value=dynamic_stop)
-
-                        # Debug logging for dynamic stop update
-                        # logger.debug(
-                        #     f"{current_time.strftime('%Y-%m-%d %H:%M')} Updated dynamic stop for {pair} (long): "
-                        #     f"{old_dynamic_stop:.6f} -> {dynamic_stop:.6f}"
-                        # )
 
                     # Determine stop loss price based on conditions
                     if use_dynamic_stop and dynamic_stop is not None:
@@ -1225,12 +1242,6 @@ class FractalStrategy(IStrategy):
                         atr_stop_price = last_candle["close"] - trailing_atr
                         stop_loss_price = max(dynamic_stop * self.down_slippage, atr_stop_price)
 
-                        # Debug logging for final stop calculation
-                        # logger.debug(
-                        #     f"Using dynamic stop for {pair} (long): "
-                        #     f"Dynamic={dynamic_stop:.6f}, ATR stop={atr_stop_price:.6f}, "
-                        #     f"Final={stop_loss_price:.6f}"
-                        # )
                     else:
                         return None
 
@@ -1244,24 +1255,10 @@ class FractalStrategy(IStrategy):
                     else:  # Default to lrsi
                         current_stop = last_candle.get(f"peak_{self.primary_timeframe}", float("inf"))
 
-                    # Debug logging for current values
-                    # logger.debug(
-                    #     f"Short position {pair}: Current stop={current_stop:.6f}, "
-                    #     f"Dynamic stop={dynamic_stop}, Initial stop={initial_stop}, "
-                    #     f"Use dynamic={use_dynamic_stop}"
-                    # )
-
                     # Update dynamic stop if we're using dynamic stop and current stop is lower
                     if use_dynamic_stop and dynamic_stop is not None and current_stop < dynamic_stop:
-                        # old_dynamic_stop = dynamic_stop
                         dynamic_stop = current_stop
                         trade.set_custom_data(key="dynamic_stop", value=dynamic_stop)
-
-                        # Debug logging for dynamic stop update
-                        # logger.debug(
-                        #     f"{current_time.strftime('%Y-%m-%d %H:%M')} Updated dynamic stop for {pair} (short): "
-                        #     f"{old_dynamic_stop:.6f} -> {dynamic_stop:.6f}"
-                        # )
 
                     # Determine stop loss price based on conditions
                     if use_dynamic_stop and dynamic_stop is not None:
@@ -1269,12 +1266,6 @@ class FractalStrategy(IStrategy):
                         atr_stop_price = last_candle["close"] + trailing_atr
                         stop_loss_price = min(dynamic_stop * self.up_slippage, atr_stop_price)
 
-                        # Debug logging for final stop calculation
-                        # logger.debug(
-                        #     f"Using dynamic stop for {pair} (short): "
-                        #     f"Dynamic={dynamic_stop:.6f}, ATR stop={atr_stop_price:.6f}, "
-                        #     f"Final={stop_loss_price:.6f}"
-                        # )
                     else:
                         return None
 
@@ -1287,26 +1278,51 @@ class FractalStrategy(IStrategy):
                     leverage=trade.leverage,
                 )
 
-                # Only log when there's an actual change in stop loss value
-                # Use a small epsilon for floating point comparison
-                epsilon = 0.0005  # Update stop loss only if the change is more than 0.05%
-                current_stop_loss = trade.stop_loss if trade.stop_loss else 0
+                # The new proposed absolute stop price.
+                new_stop_loss_price = stop_loss_price
 
-                # Check if the difference is significant (greater than epsilon)
-                change_ratio = abs(stop_loss_price - current_stop_loss) / current_stop_loss
-                stop_loss_changed = change_ratio > epsilon
+                # Epsilon for float comparison to avoid insignificant updates.
+                epsilon = 1e-4
 
-                if stop_loss_changed or initial_stop is None:
+                # Flag to check if we have a valid, favorable update.
+                is_favorable_update = False
+
+                if old_dynamic_stop is not None:
+                    if trade.is_short:
+                        # For short trades, new stop must be lower (move down).
+                        if new_stop_loss_price < old_dynamic_stop - epsilon:
+                            is_favorable_update = True
+                    else:
+                        # For long trades, new stop must be higher (move up).
+                        if new_stop_loss_price > old_dynamic_stop + epsilon:
+                            is_favorable_update = True
+                else:
+                    # If no current stop is set, any new stop is considered an update.
+                    # This case should ideally be handled by the `after_fill` logic.
+                    is_favorable_update = True
+
+                if is_favorable_update:
+                    # Calculate change for logging purposes.
+                    # Handle case where current_dynamic_stop_price is None to avoid division by zero.
+                    old_price = old_dynamic_stop or new_stop_loss_price
+                    if old_price > 0:
+                        change_ratio = abs(new_stop_loss_price - old_price) / old_price
+                    else:
+                        change_ratio = 0.0
+
                     logger.info(
                         f"{current_time.strftime('%Y-%m-%d %H:%M')} Stoploss update for {pair} "
                         f"({'short' if trade.is_short else 'long'}): "
-                        f"price={stop_loss_price:.6f}, "
+                        f"from {old_price:.6f} to price={new_stop_loss_price:.6f}, "
                         f"change={change_ratio:.4%}"
                     )
+
+                    # Return the new stop loss as a percentage for the framework.
+                    return final_stoploss
                 else:
+                    # Stop has not moved in a favorable direction, do nothing.
                     return None
 
-                return final_stoploss
             return None
 
         except Exception as e:
