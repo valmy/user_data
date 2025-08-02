@@ -1296,7 +1296,7 @@ class FractalStrategy(IStrategy):
                 change_ratio = abs(stop_loss_price - current_stop_loss) / current_stop_loss
                 stop_loss_changed = change_ratio > epsilon
 
-                if stop_loss_changed:
+                if stop_loss_changed or initial_stop is None:
                     logger.info(
                         f"{current_time.strftime('%Y-%m-%d %H:%M')} Stoploss update for {pair} "
                         f"({'short' if trade.is_short else 'long'}): "
