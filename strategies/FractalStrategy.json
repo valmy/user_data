@@ -25,7 +25,7 @@
       "primary_chop_threshold": 42,
       "rr_ratio": 3.1,
       "small_candle_ratio": 3.4,
-      "use_cradle_trigger": true,
+      "use_cradle_trigger": false,
       "volume_threshold": 2.9
     },
     "sell": {

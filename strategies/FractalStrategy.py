@@ -607,27 +607,29 @@ class FractalStrategy(IStrategy):
                 long_lrsi_trigger = qtpylib.crossed_above(df["laguerre"], self.buy_laguerre_level.value)
                 short_lrsi_trigger = qtpylib.crossed_below(df["laguerre"], self.sell_laguerre_level.value)
 
-                # Detect peaks and troughs in signal timeframe (5m)
-                # Peak: high is higher than previous and next candles
+                # Detect peaks and troughs in signal timeframe (5m) using proper fractal analysis
+                # Peak: A confirmed peak occurs at shift(2) when that candle's high is higher than
+                # both the 2 candles before it AND the 2 candles after it (current implementation)
                 df["is_peak"] = (
-                    (df["high"] > df["high"].shift(1)) &
-                    (df["high"] > df["high"].shift(2)) &
-                    (df["high"] >= df["high"].shift(-1)) &
-                    (df["high"] >= df["high"].shift(-2))
+                    (df["high"].shift(2) >= df["high"].shift(4)) &  # Higher than 2 candles before
+                    (df["high"].shift(2) >= df["high"].shift(3)) &  # Higher than 1 candle before
+                    (df["high"].shift(2) >= df["high"].shift(1)) &  # Higher than 1 candle after
+                    (df["high"].shift(2) >= df["high"])             # Higher than current candle
                 )
 
-                # Trough: low is lower than previous and next candles
+                # Trough: A confirmed trough occurs at shift(2) when that candle's low is lower than
+                # both the 2 candles before it AND the 2 candles after it (current implementation)
                 df["is_trough"] = (
-                    (df["low"] < df["low"].shift(1)) &
-                    (df["low"] < df["low"].shift(2)) &
-                    (df["low"] <= df["low"].shift(-1)) &
-                    (df["low"] <= df["low"].shift(-2))
+                    (df["low"].shift(2) <= df["low"].shift(4)) &   # Lower than 2 candles before
+                    (df["low"].shift(2) <= df["low"].shift(3)) &   # Lower than 1 candle before
+                    (df["low"].shift(2) <= df["low"].shift(1)) &   # Lower than 1 candle after
+                    (df["low"].shift(2) <= df["low"])              # Lower than current candle
                 )
 
-                # Identify peak and trough values
-                df["peak_value"] = np.where(df["is_peak"], df["high"], np.nan)
+                # Identify peak and trough values using the confirmed fractal points
+                df["peak_value"] = np.where(df["is_peak"], df["high"].shift(2), np.nan)
                 df["peak_value"] = df["peak_value"].ffill()
-                df["trough_value"] = np.where(df["is_trough"], df["low"], np.nan)
+                df["trough_value"] = np.where(df["is_trough"], df["low"].shift(2), np.nan)
                 df["trough_value"] = df["trough_value"].ffill()
 
                 # Identify increasing/decreasing peaks and troughs
@@ -640,25 +642,29 @@ class FractalStrategy(IStrategy):
                 df["trough_increasing"] = df["trough_value"] > df["trough_value"].shift(window)
                 df["trough_decreasing"] = df["trough_value"] < df["trough_value"].shift(window)
 
-                # Identify MACD peaks and troughs
+                # Identify MACD peaks and troughs using proper fractal analysis
+                # MACD Peak: A confirmed peak occurs at shift(2) when that value is higher than
+                # both the 2 values before it AND the 2 values after it
                 df["macd_peak"] = (
-                    (df["MACD_12_26_9"] > df["MACD_12_26_9"].shift(1)) &
-                    (df["MACD_12_26_9"] > df["MACD_12_26_9"].shift(2)) &
-                    (df["MACD_12_26_9"] >= df["MACD_12_26_9"].shift(-1)) &
-                    (df["MACD_12_26_9"] >= df["MACD_12_26_9"].shift(-2))
+                    (df["MACD_12_26_9"].shift(2) >= df["MACD_12_26_9"].shift(4)) &  # Higher than 2 periods before
+                    (df["MACD_12_26_9"].shift(2) >= df["MACD_12_26_9"].shift(3)) &  # Higher than 1 period before
+                    (df["MACD_12_26_9"].shift(2) >= df["MACD_12_26_9"].shift(1)) &  # Higher than 1 period after
+                    (df["MACD_12_26_9"].shift(2) >= df["MACD_12_26_9"])             # Higher than current period
                 )
 
+                # MACD Trough: A confirmed trough occurs at shift(2) when that value is lower than
+                # both the 2 values before it AND the 2 values after it
                 df["macd_trough"] = (
-                    (df["MACD_12_26_9"] < df["MACD_12_26_9"].shift(1)) &
-                    (df["MACD_12_26_9"] < df["MACD_12_26_9"].shift(2)) &
-                    (df["MACD_12_26_9"] <= df["MACD_12_26_9"].shift(-1)) &
-                    (df["MACD_12_26_9"] <= df["MACD_12_26_9"].shift(-2))
+                    (df["MACD_12_26_9"].shift(2) <= df["MACD_12_26_9"].shift(4)) &  # Lower than 2 periods before
+                    (df["MACD_12_26_9"].shift(2) <= df["MACD_12_26_9"].shift(3)) &  # Lower than 1 period before
+                    (df["MACD_12_26_9"].shift(2) <= df["MACD_12_26_9"].shift(1)) &  # Lower than 1 period after
+                    (df["MACD_12_26_9"].shift(2) <= df["MACD_12_26_9"])             # Lower than current period
                 )
 
-                # Identify MACD peak and trough values
-                df["macd_peak_value"] = np.where(df["macd_peak"], df["MACD_12_26_9"], np.nan)
+                # Identify MACD peak and trough values using the confirmed fractal points
+                df["macd_peak_value"] = np.where(df["macd_peak"], df["MACD_12_26_9"].shift(2), np.nan)
                 df["macd_peak_value"] = df["macd_peak_value"].ffill()
-                df["macd_trough_value"] = np.where(df["macd_trough"], df["MACD_12_26_9"], np.nan)
+                df["macd_trough_value"] = np.where(df["macd_trough"], df["MACD_12_26_9"].shift(2), np.nan)
                 df["macd_trough_value"] = df["macd_trough_value"].ffill()
 
                 # Identify increasing/decreasing MACD peaks and troughs
