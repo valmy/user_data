@@ -2,17 +2,17 @@
 # Modify this cell to insure that the output shows the correct path.
 # Define all paths relative to the project root shown in the cell output
 import os
-from pathlib import Path
-from datetime import datetime, timedelta, timezone
 import pprint
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from freqtrade.configuration import Configuration
 from freqtrade.data.btanalysis import load_backtest_data, load_backtest_stats
+from freqtrade.data.dataprovider import DataProvider
 from freqtrade.data.history import load_pair_history
 from freqtrade.enums import CandleType
-from freqtrade.data.dataprovider import DataProvider
-from freqtrade.resolvers import StrategyResolver
 from freqtrade.exchange.binance import Binance
+from freqtrade.resolvers import StrategyResolver
 
 
 project_root = "/freqtrade"
@@ -46,7 +46,7 @@ data_location = config["datadir"]
 # Date range configuration
 date_range_days = 1  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
 overall_start = "2025-07-01"
-overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=timezone.utc).strftime("%Y-%m-%d")
+overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=UTC).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
 end_date_dt = datetime.strptime(overall_end, "%Y-%m-%d")
@@ -94,8 +94,8 @@ candles = load_pair_history(
 ) # This initial call might not be strictly necessary if immediately looped
 
 print(candles.loc[
-    (candles['date'] >= datetime(2025, 7, 15, 7, 30, tzinfo=timezone.utc)) &
-    (candles['date'] <= datetime(2025, 7, 15, 8, 15, tzinfo=timezone.utc)),
+    (candles['date'] >= datetime(2025, 7, 15, 7, 30, tzinfo=UTC)) &
+    (candles['date'] <= datetime(2025, 7, 15, 8, 15, tzinfo=UTC)),
     ['date', 'open', 'close', 'high', 'low', 'volume']
 ])
 
@@ -107,13 +107,13 @@ df = loaded_strategy.analyze_ticker(candles, {"pair": pair})
 
 # print(candles)
 print(df.loc[
-    (df['date'] >= datetime(2025, 7, 15, 7, 30, tzinfo=timezone.utc)) &
-    (df['date'] <= datetime(2025, 7, 15, 8, 15, tzinfo=timezone.utc)),
+    (df['date'] >= datetime(2025, 7, 15, 7, 30, tzinfo=UTC)) &
+    (df['date'] <= datetime(2025, 7, 15, 8, 15, tzinfo=UTC)),
     ['date', 'high', 'low', 'trough_15m', 'peak_15m', 'donchian_upper_15m', 'donchian_lower_15m']
 ])
 # print(all_trades)
 
-start_date = datetime.strptime("2025-07-15", "%Y-%m-%d").replace(tzinfo=timezone.utc)
+start_date = datetime.strptime("2025-07-15", "%Y-%m-%d").replace(tzinfo=UTC)
 end_date = start_date + timedelta(days=1)
 
 annotations = loaded_strategy.plot_annotations(
@@ -126,7 +126,7 @@ annotations = loaded_strategy.plot_annotations(
 pprint.pprint(annotations)
 
 import json
-from pandas import json_normalize
+
 
 # Convert the DataFrame to a list of dictionaries
 trades_list = all_trades.to_dict('records')

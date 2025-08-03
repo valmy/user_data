@@ -15,6 +15,7 @@ from freqtrade.enums import CandleType
 from freqtrade.exchange.binance import Binance
 from freqtrade.resolvers import StrategyResolver
 
+
 # Change directory
 # Modify this cell to insure that the output shows the correct path.
 # Define all paths relative to the project root shown in the cell output

@@ -32,8 +32,7 @@
       "sell_laguerre_level": 0.8,
       "atr_stop_ratio": 6.39,
       "slippage": 0.002,
-      "trailing_stop_ratio": 0.1,
-      "use_take_profit_2": false
+      "trailing_stop_ratio": 0.1
     },
     "protection": {}
   },

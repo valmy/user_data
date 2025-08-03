@@ -174,14 +174,10 @@ class FractalStrategy(IStrategy):
     )
 
     slippage = DecimalParameter(
-        0.001, 0.01, default=0.003, decimals=3, space="sell", load=True, optimize=True
+        0.001, 0.01, default=0.002, decimals=3, space="sell", load=True, optimize=False
     )
     down_slippage = 1 - slippage.value
     up_slippage = 1 + slippage.value
-
-    use_take_profit_2 = BooleanParameter(
-        default=True, space="sell", optimize=True
-    )
 
     def is_hyperopt_mode(self) -> bool:
         """Check if the current run mode is hyperopt"""
@@ -1036,17 +1032,11 @@ class FractalStrategy(IStrategy):
                 stop_loss_price = raw_stop_price * self.down_slippage
                 price_diff_to_stop = trade.open_rate - stop_loss_price
                 take_profit_price = trade.open_rate + price_diff_to_stop
-                take_profit_2_price = last_candle.get("long_target")
-                if take_profit_2_price <= take_profit_price:
-                    take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
             elif side == "short":
                 raw_stop_price = last_candle.get("stop_upper")
                 stop_loss_price = raw_stop_price * self.up_slippage
                 price_diff_to_stop = stop_loss_price - trade.open_rate
                 take_profit_price = trade.open_rate - price_diff_to_stop
-                take_profit_2_price = last_candle.get("short_target")
-                if take_profit_2_price >= take_profit_price:
-                    take_profit_2_price = trade.open_rate - 2 * price_diff_to_stop
 
         elif entry_tag == "breakout":
             if side == "long":
@@ -1054,17 +1044,11 @@ class FractalStrategy(IStrategy):
                 stop_loss_price = raw_stop_price * self.down_slippage
                 price_diff_to_stop = trade.open_rate - stop_loss_price
                 take_profit_price = trade.open_rate + price_diff_to_stop
-                take_profit_2_price = last_candle.get("long_target")
-                if take_profit_2_price <= take_profit_price:
-                    take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
             elif side == "short":
                 raw_stop_price = last_candle.get("close_plus_2atr")
                 stop_loss_price = raw_stop_price * self.up_slippage
                 price_diff_to_stop = stop_loss_price - trade.open_rate
                 take_profit_price = trade.open_rate - price_diff_to_stop
-                take_profit_2_price = last_candle.get("short_target")
-                if take_profit_2_price >= take_profit_price:
-                    take_profit_2_price = trade.open_rate - 2 * price_diff_to_stop
 
         else:  # Default to lrsi
             if side == "long":
@@ -1072,17 +1056,11 @@ class FractalStrategy(IStrategy):
                 stop_loss_price = raw_stop_price * self.down_slippage
                 price_diff_to_stop = trade.open_rate - stop_loss_price
                 take_profit_price = trade.open_rate + price_diff_to_stop
-                take_profit_2_price = last_candle.get("long_target")
-                if take_profit_2_price <= take_profit_price:
-                    take_profit_2_price = trade.open_rate + 2 * price_diff_to_stop
             elif side == "short":
                 raw_stop_price = last_candle.get("short_stop")
                 stop_loss_price = raw_stop_price * self.up_slippage
                 price_diff_to_stop = stop_loss_price - trade.open_rate
                 take_profit_price = trade.open_rate - price_diff_to_stop
-                take_profit_2_price = last_candle.get("short_target")
-                if take_profit_2_price >= take_profit_price:
-                    take_profit_2_price = trade.open_rate - 2 * price_diff_to_stop
 
         if side == "long":
             initial_trough = last_candle.get(f"trough_{self.primary_timeframe}")
@@ -1097,13 +1075,9 @@ class FractalStrategy(IStrategy):
         # Log the take profit price being set
         logger.info(
             f"Setting take_profit_price={take_profit_price} for {trade.pair}, "
-            f"take_profit_2={take_profit_2_price}, "
             f"stop_loss={stop_loss_price:.6f}"
         )
         trade.set_custom_data(key="take_profit_price", value=take_profit_price)
-        trade.set_custom_data(
-            key="take_profit_2_price", value=take_profit_2_price
-        )
         # Initialize dynamic stop with the initial stop loss for short positions
         trade.set_custom_data(key="initial_stop", value=raw_stop_price)
         trade.set_custom_data(key="dynamic_stop", value=raw_stop_price)
@@ -1617,15 +1591,9 @@ class FractalStrategy(IStrategy):
             return
 
         take_profit_price = trade.get_custom_data(key="take_profit_price")
-        take_profit_2_price = trade.get_custom_data(
-            key="take_profit_2_price", default=None
-        )
         take_profit_reduced = trade.get_custom_data(
             key="take_profit_reduced", default=False
         )
-        take_profit_2_reduced = trade.get_custom_data(
-            key="take_profit_2_reduced", default=False
-        ) if self.use_take_profit_2.value and trade.enter_tag == "lrsi" else True
 
         # Check if we've reached take profit price and haven't reduced position yet
         # For long positions: current_rate >= take_profit_price
@@ -1657,48 +1625,6 @@ class FractalStrategy(IStrategy):
             # expected_exit_amount = (
             #     abs(reduction_stake_amount) * trade.amount / trade.stake_amount
             # )
-            # expected_exit_percentage = (expected_exit_amount / trade.amount) * 100
-
-            # logger.debug(f"Position reduction calculation for {trade.pair}:")
-            # logger.debug(
-            #     f"  Current position: {trade.amount:.8f} {trade.base_currency}"
-            # )
-            # logger.debug(
-            #     f"  Current stake: {trade.stake_amount:.6f} {trade.stake_currency}"
-            # )
-            # logger.debug(f"  Reduction stake amount: {reduction_stake_amount:.6f}")
-            # logger.debug(
-            #     f"  Expected exit amount: {expected_exit_amount:.8f} ({expected_exit_percentage:.1f}%)"
-            # )
-
-            return reduction_stake_amount
-
-        take_profit_2_reached = False
-        if take_profit_2_price is not None and not take_profit_2_reduced:
-            if not trade.is_short:
-                take_profit_2_reached = current_rate >= take_profit_2_price
-            else:
-                take_profit_2_reached = current_rate <= take_profit_2_price
-
-        if take_profit_2_reached:
-            # Mark that we've reduced the position at take profit 2
-            trade.set_custom_data(key="take_profit_2_reduced", value=True)
-
-            side_text = "short" if trade.is_short else "long"
-            logger.info(
-                f"Take profit 2 reached for {trade.pair} ({side_text}) at {current_rate:.6f} "
-                f"(target: {take_profit_2_price:.6f}). Reducing position by 30% of original stake."
-            )
-
-            # To reduce by 30% of the original stake, we must reduce by 60% of the
-            # remaining stake (since 50% was already sold).
-            reduction_stake_amount = -0.6 * trade.stake_amount
-
-            # Calculate expected amount to be exited for validation
-            # expected_exit_amount = (
-            #     abs(reduction_stake_amount) * trade.amount / trade.stake_amount
-            # )
-
             # expected_exit_percentage = (expected_exit_amount / trade.amount) * 100
 
             # logger.debug(f"Position reduction calculation for {trade.pair}:")
