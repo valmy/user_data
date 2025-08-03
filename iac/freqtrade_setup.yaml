@@ -4,7 +4,7 @@
   gather_facts: no
   vars:
     freqtrade_repo: "https://github.com/freqtrade/freqtrade.git"
-    freqtrade_branch: "2025.5"  # or "stable" (check tags)
+    freqtrade_branch: "2025.7"  # or "stable" (check tags)
     strategy_repo: "https://github.com/valmy/user_data.git"
     strategy_dir: "/home/freqtrade/freqtrade/user_data"
     config_local_path: "{{ playbook_dir }}/../config-private-binance.json"  # Path to your local config file in user_data directory

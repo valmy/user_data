@@ -46,7 +46,7 @@ do_generate_charts = True
 
 # Date range configuration
 date_range_days = 0  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
-overall_start = "2025-07-14"
+overall_start = "2025-08-01"
 overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=UTC).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
@@ -517,7 +517,7 @@ if do_generate_charts:
                     name='EMA 10',
                     line=dict(color='cyan', width=1)
                 ), row=1, col=1)
-                
+
             if 'ema20' in data_red.columns:
                 fig.add_trace(go.Scatter(
                     x=data_red.date,
