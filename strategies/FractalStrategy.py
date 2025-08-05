@@ -548,10 +548,10 @@ class FractalStrategy(IStrategy):
 
         dataframe["candle_range"] = dataframe["high"] - dataframe["low"]
         dataframe["bullish_candle"] = (
-            dataframe["close"] > dataframe["low"] + 0.7 * dataframe["candle_range"]
+            dataframe["close"] > (dataframe["low"] + 0.6 * dataframe["candle_range"])
         )
         dataframe["bearish_candle"] = (
-            dataframe["close"] < dataframe["high"] - 0.7 * dataframe["candle_range"]
+            dataframe["close"] < (dataframe["high"] - 0.6 * dataframe["candle_range"])
         )
         # Small candle condition: candle range must be smaller than small_candle_ratio * ATR
         dataframe["small_candle"] = dataframe["candle_range"] < (
@@ -646,8 +646,6 @@ class FractalStrategy(IStrategy):
 
                 # Pre-calculate common conditions for better performance
                 df["strong_volume"] = df["volume"] > (df["volume_mean"] * 1.5)
-                df["bullish_candle"] = df["close"] > df["open"]
-                df["bearish_candle"] = df["close"] < df["open"]
                 back_range = int(3 * self.ratio_primary_to_signal)
                 df["above_resistance"] = (
                     df["low"].rolling(window=back_range).min()
@@ -691,7 +689,6 @@ class FractalStrategy(IStrategy):
                     & (df["ema20"] < df["ema10"])
                     & (df[f"higher_high_{self.primary_timeframe}"])
                     & (df[f"ema20_{self.primary_timeframe}"] < df[f"ema10_{self.primary_timeframe}"])
-                    & (df["bullish_candle"])
                     & (df["small_candle"])
                 )
 
@@ -700,7 +697,6 @@ class FractalStrategy(IStrategy):
                     & (df["ema20"] > df["ema10"])
                     & (df[f"lower_low_{self.primary_timeframe}"])
                     & (df[f"ema20_{self.primary_timeframe}"] > df[f"ema10_{self.primary_timeframe}"])
-                    & (df["bearish_candle"])
                     & (df["small_candle"])
                 )
 
@@ -771,12 +767,14 @@ class FractalStrategy(IStrategy):
                     df[ha_upswing_col] &
                     cond_mtf_chop &
                     df["strong_volume"] &
+                    df["bullish_candle"] &
                     df["small_candle"]
                 )
                 base_short_condition = (
                     df[ha_downswing_col] &
                     cond_mtf_chop &
                     df["strong_volume"] &
+                    df["bearish_candle"] &
                     df["small_candle"]
                 )
 
