@@ -19,7 +19,8 @@
       "PENGU/USDT:USDT",
       "FARTCOIN/USDT:USDT",
       "CFX/USDT:USDT",
-      "ARB/USDT:USDT"
+      "ARB/USDT:USDT",
+      "WIF/USDT:USDT"
     ],
     "pair_blacklist": [
       // "ETH/USDT:USDT",
@@ -37,7 +38,8 @@
       // "PENGU/USDT:USDT",
       // "FARTCOIN/USDT:USDT",
       // "CFX/USDT:USDT"
-      // "ARB/USDT:USDT"
+      // "ARB/USDT:USDT",
+      // "WIF/USDT:USDT"
     ]
   },
   "pairlists": [

@@ -44,6 +44,7 @@ config = Configuration.from_files(["user_data/config-backtest.json"])
 data_location = config["datadir"]
 
 do_generate_charts = True
+row2_type = 'macd'  # macd or lrsi
 
 # Date range configuration
 date_range_days = 0  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
@@ -448,32 +449,63 @@ if do_generate_charts:
                         hoverinfo='skip'
                     ), row=1, col=1)
 
-            # Add Laguerre RSI line
-            if 'laguerre' in data_red.columns:
-                fig.add_trace(go.Scatter(
-                    x=data_red.date,
-                    y=data_red['laguerre'],
-                    name='Laguerre RSI',
-                    line=dict(color='yellow', width=1)
-                ), row=2, col=1)
+            # Conditional rendering based on row2_type switch
+            if row2_type == 'lrsi':
+                # Add Laguerre RSI line
+                if 'laguerre' in data_red.columns:
+                    fig.add_trace(go.Scatter(
+                        x=data_red.date,
+                        y=data_red['laguerre'],
+                        name='Laguerre RSI',
+                        line=dict(color='yellow', width=1)
+                    ), row=2, col=1)
 
-            # Add horizontal lines at 0.2 and 0.8 for Laguerre RSI
-            fig.add_hline(y=0.8, line_dash="dash", row=2, col=1,
-                        annotation_text="Overbought (0.8)",
-                        annotation_position="bottom right",
-                        line_color="rgba(200, 200, 200, 0.5)")
-            fig.add_hline(y=0.2, line_dash="dash", row=2, col=1,
-                        annotation_text="Oversold (0.2)",
-                        annotation_position="bottom right",
-                        line_color="rgba(200, 200, 200, 0.5)")
+                # Add horizontal lines at 0.2 and 0.8 for Laguerre RSI
+                fig.add_hline(y=0.8, line_dash="dash", row=2, col=1,
+                            annotation_text="Overbought (0.8)",
+                            annotation_position="bottom right",
+                            line_color="rgba(200, 200, 200, 0.5)")
+                fig.add_hline(y=0.2, line_dash="dash", row=2, col=1,
+                            annotation_text="Oversold (0.2)",
+                            annotation_position="bottom right",
+                            line_color="rgba(200, 200, 200, 0.5)")
 
-            # Original volume bar code (commented out or removed)
-            """fig.add_trace(go.Bar(
-                x=data_red.date,
-                y=data_red.volume,
-                name="Volume",
-                marker_color='#5C6BC0',  # Blue for volume bars
-            ), row=2, col=1)"""
+            elif row2_type == 'macd':
+                # MACD with conditional coloring
+                # Add Primary Timeframe MACD line with conditional coloring
+                primary_macd_col = f"MACD_12_26_9_{strategy.primary_timeframe}"
+                if primary_macd_col in data_red.columns:
+                    primary_macd_data = data_red[primary_macd_col]
+
+                    # Positive Primary MACD values (light green)
+                    positive_mask = primary_macd_data >= 0
+                    if positive_mask.any():
+                        fig.add_trace(go.Scatter(
+                            x=data_red.date[positive_mask],
+                            y=primary_macd_data[positive_mask],
+                            name=f'Primary MACD (+)',
+                            line=dict(color='lightgreen', width=1),
+                            mode='lines',
+                            connectgaps=False
+                        ), row=2, col=1)
+
+                    # Negative Primary MACD values (light red)
+                    negative_mask = primary_macd_data < 0
+                    if negative_mask.any():
+                        fig.add_trace(go.Scatter(
+                            x=data_red.date[negative_mask],
+                            y=primary_macd_data[negative_mask],
+                            name=f'Primary MACD (-)',
+                            line=dict(color='lightcoral', width=1),
+                            mode='lines',
+                            connectgaps=False
+                        ), row=2, col=1)
+
+                # Add zero line for MACD
+                fig.add_hline(y=0, line_dash="dash", row=2, col=1,
+                            annotation_text="Zero Line",
+                            annotation_position="bottom right",
+                            line_color="rgba(200, 200, 200, 0.3)")
 
             # Add Choppiness Index for primary timeframe
             primary_chop_col = f'chop_{primary_timeframe}'
@@ -528,11 +560,19 @@ if do_generate_charts:
                 ), row=1, col=1)
 
             # Update layout for a dark theme
+            # Set y-axis title based on row2_type
+            if row2_type == 'lrsi':
+                yaxis2_title = "Laguerre RSI"
+            elif row2_type == 'macd':
+                yaxis2_title = "MACD"
+            else:
+                yaxis2_title = "Indicators"
+
             fig.update_layout(
                 template='plotly_dark',
                 title=f"Price Chart for {pair}",
                 yaxis_title="Price (USD)",
-                yaxis2_title="Laguerre RSI",
+                yaxis2_title=yaxis2_title,
                 yaxis3_title="Choppiness Index",
                 showlegend=False,
                 # Explicitly control the x-axis range slider

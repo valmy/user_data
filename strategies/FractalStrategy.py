@@ -34,6 +34,7 @@ from freqtrade.strategy import (
 import talib.abstract as ta
 import pandas_ta as pta
 from technical import indicators, qtpylib
+from scipy.signal import find_peaks
 
 import logging
 import traceback  # Import traceback for detailed error logging
@@ -129,6 +130,15 @@ class FractalStrategy(IStrategy):
     convergence_window = IntParameter(3, 10, default=5, space="buy", optimize=False)
     use_breakout_trigger = BooleanParameter(default=False, space="buy", optimize=False)
 
+    # Parameters for find_peaks
+    peak_distance = IntParameter(3, 10, default=5, space="buy", optimize=True)
+    peak_prominence_atr_factor = DecimalParameter(
+        0.5, 2.0, default=1.0, decimals=1, space="buy", optimize=True
+    )
+    macd_prominence_std_factor = DecimalParameter(
+        0.5, 2.0, default=1.0, decimals=1, space="buy", optimize=True
+    )
+
     # Parameters for tuning
     volume_threshold = DecimalParameter(
         1.0, 4.0, default=2, decimals=1, space="buy", optimize=True
@@ -220,6 +230,70 @@ class FractalStrategy(IStrategy):
 
         return informative_pairs
 
+
+    def _populate_pivots(self, df: DataFrame, window: int) -> DataFrame:
+        """
+        Finds peaks and troughs for price and MACD using scipy.signal.find_peaks
+        and adds them and their trends to the dataframe.
+        """
+        # Price peaks and troughs
+        price_prominence = df["atr"].rolling(20).mean() * self.peak_prominence_atr_factor.value
+        peak_indices, _ = find_peaks(
+            df["high"], distance=self.peak_distance.value, prominence=price_prominence
+        )
+        trough_indices, _ = find_peaks(
+            -df["low"], distance=self.peak_distance.value, prominence=price_prominence
+        )
+
+        df["peak_value"] = np.nan
+        df.loc[df.index[peak_indices], "peak_value"] = df["high"].iloc[peak_indices]
+        df["peak_value"] = df["peak_value"].ffill()
+
+        df["trough_value"] = np.nan
+        df.loc[df.index[trough_indices], "trough_value"] = df["low"].iloc[trough_indices]
+        df["trough_value"] = df["trough_value"].ffill()
+
+        # MACD peaks and troughs
+        macd_prominence = (
+            df["MACD_12_26_9"].rolling(20).std()
+            * self.macd_prominence_std_factor.value
+        )
+        macd_peak_indices, _ = find_peaks(
+            df["MACD_12_26_9"],
+            distance=self.peak_distance.value,
+            prominence=macd_prominence,
+        )
+        macd_trough_indices, _ = find_peaks(
+            -df["MACD_12_26_9"],
+            distance=self.peak_distance.value,
+            prominence=macd_prominence,
+        )
+
+        df["macd_peak_value"] = np.nan
+        df.loc[df.index[macd_peak_indices], "macd_peak_value"] = df["MACD_12_26_9"].iloc[
+            macd_peak_indices
+        ]
+        df["macd_peak_value"] = df["macd_peak_value"].ffill()
+
+        df["macd_trough_value"] = np.nan
+        df.loc[df.index[macd_trough_indices], "macd_trough_value"] = df["MACD_12_26_9"].iloc[
+            macd_trough_indices
+        ]
+        df["macd_trough_value"] = df["macd_trough_value"].ffill()
+
+        # Identify increasing/decreasing peaks and troughs
+        df["peak_increasing"] = df["peak_value"] > df["peak_value"].shift(window)
+        df["peak_decreasing"] = df["peak_value"] < df["peak_value"].shift(window)
+        df["trough_increasing"] = df["trough_value"] > df["trough_value"].shift(window)
+        df["trough_decreasing"] = df["trough_value"] < df["trough_value"].shift(window)
+
+        # Identify increasing/decreasing MACD peaks and troughs
+        df["macd_peak_increasing"] = df["macd_peak_value"] > df["macd_peak_value"].shift(window)
+        df["macd_peak_decreasing"] = df["macd_peak_value"] < df["macd_peak_value"].shift(window)
+        df["macd_trough_increasing"] = df["macd_trough_value"] > df["macd_trough_value"].shift(window)
+        df["macd_trough_decreasing"] = df["macd_trough_value"] < df["macd_trough_value"].shift(window)
+
+        return df
 
     @informative(primary_timeframe)
     def populate_informative_primary(
@@ -316,6 +390,8 @@ class FractalStrategy(IStrategy):
                                       - self.breakout_stop_ratio.value * dataframe["atr"])
         dataframe["short_atr_stop"] = (dataframe["close"]
                                        + self.breakout_stop_ratio.value * dataframe["atr"])
+        # MACD
+        dataframe.ta.macd(fast=12, slow=26, signal=9, append=True)
 
         # Choppiness Index
         dataframe["chop"] = pta.chop(
@@ -606,74 +682,8 @@ class FractalStrategy(IStrategy):
                 long_lrsi_trigger = qtpylib.crossed_above(df["laguerre"], self.buy_laguerre_level.value)
                 short_lrsi_trigger = qtpylib.crossed_below(df["laguerre"], self.sell_laguerre_level.value)
 
-                # Detect peaks and troughs in signal timeframe (5m) using proper fractal analysis
-                # Peak: A confirmed peak occurs at shift(2) when that candle's high is higher than
-                # both the 2 candles before it AND the 2 candles after it (current implementation)
-                df["is_peak"] = (
-                    (df["high"].shift(2) >= df["high"].shift(4)) &  # Higher than 2 candles before
-                    (df["high"].shift(2) >= df["high"].shift(3)) &  # Higher than 1 candle before
-                    (df["high"].shift(2) >= df["high"].shift(1)) &  # Higher than 1 candle after
-                    (df["high"].shift(2) >= df["high"])             # Higher than current candle
-                )
-
-                # Trough: A confirmed trough occurs at shift(2) when that candle's low is lower than
-                # both the 2 candles before it AND the 2 candles after it (current implementation)
-                df["is_trough"] = (
-                    (df["low"].shift(2) <= df["low"].shift(4)) &   # Lower than 2 candles before
-                    (df["low"].shift(2) <= df["low"].shift(3)) &   # Lower than 1 candle before
-                    (df["low"].shift(2) <= df["low"].shift(1)) &   # Lower than 1 candle after
-                    (df["low"].shift(2) <= df["low"])              # Lower than current candle
-                )
-
-                # Identify peak and trough values using the confirmed fractal points
-                df["peak_value"] = np.where(df["is_peak"], df["high"].shift(2), np.nan)
-                df["peak_value"] = df["peak_value"].ffill()
-                df["trough_value"] = np.where(df["is_trough"], df["low"].shift(2), np.nan)
-                df["trough_value"] = df["trough_value"].ffill()
-
-                # Identify increasing/decreasing peaks and troughs
-                # For peaks: compare current peak with previous peak
-                window = self.convergence_window.value
-                df["peak_increasing"] = df["peak_value"] > df["peak_value"].shift(window)
-                df["peak_decreasing"] = df["peak_value"] < df["peak_value"].shift(window)
-
-                # For troughs: compare current trough with previous trough
-                df["trough_increasing"] = df["trough_value"] > df["trough_value"].shift(window)
-                df["trough_decreasing"] = df["trough_value"] < df["trough_value"].shift(window)
-
-                # Identify MACD peaks and troughs using proper fractal analysis
-                # MACD Peak: A confirmed peak occurs at shift(2) when that value is higher than
-                # both the 2 values before it AND the 2 values after it
-                df["macd_peak"] = (
-                    (df["MACD_12_26_9"].shift(2) >= df["MACD_12_26_9"].shift(4)) &  # Higher than 2 periods before
-                    (df["MACD_12_26_9"].shift(2) >= df["MACD_12_26_9"].shift(3)) &  # Higher than 1 period before
-                    (df["MACD_12_26_9"].shift(2) >= df["MACD_12_26_9"].shift(1)) &  # Higher than 1 period after
-                    (df["MACD_12_26_9"].shift(2) >= df["MACD_12_26_9"])             # Higher than current period
-                )
-
-                # MACD Trough: A confirmed trough occurs at shift(2) when that value is lower than
-                # both the 2 values before it AND the 2 values after it
-                df["macd_trough"] = (
-                    (df["MACD_12_26_9"].shift(2) <= df["MACD_12_26_9"].shift(4)) &  # Lower than 2 periods before
-                    (df["MACD_12_26_9"].shift(2) <= df["MACD_12_26_9"].shift(3)) &  # Lower than 1 period before
-                    (df["MACD_12_26_9"].shift(2) <= df["MACD_12_26_9"].shift(1)) &  # Lower than 1 period after
-                    (df["MACD_12_26_9"].shift(2) <= df["MACD_12_26_9"])             # Lower than current period
-                )
-
-                # Identify MACD peak and trough values using the confirmed fractal points
-                df["macd_peak_value"] = np.where(df["macd_peak"], df["MACD_12_26_9"].shift(2), np.nan)
-                df["macd_peak_value"] = df["macd_peak_value"].ffill()
-                df["macd_trough_value"] = np.where(df["macd_trough"], df["MACD_12_26_9"].shift(2), np.nan)
-                df["macd_trough_value"] = df["macd_trough_value"].ffill()
-
-                # Identify increasing/decreasing MACD peaks and troughs
-                # For MACD peaks: compare current peak with previous peak
-                df["macd_peak_increasing"] = df["macd_peak_value"] > df["macd_peak_value"].shift(window)
-                df["macd_peak_decreasing"] = df["macd_peak_value"] < df["macd_peak_value"].shift(window)
-
-                # For MACD troughs: compare current trough with previous trough
-                df["macd_trough_increasing"] = df["macd_trough_value"] > df["macd_trough_value"].shift(window)
-                df["macd_trough_decreasing"] = df["macd_trough_value"] < df["macd_trough_value"].shift(window)
+                # Populate pivots and their trends
+                df = self._populate_pivots(df, self.convergence_window.value)
 
                 # Cradle Triggers
                 long_cradle_base = (
