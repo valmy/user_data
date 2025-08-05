@@ -465,10 +465,10 @@ class FractalStrategy(IStrategy):
 
         dataframe["candle_range"] = dataframe["high"] - dataframe["low"]
         dataframe["bullish_candle"] = (
-            dataframe["close"] > dataframe["low"] + 0.7 * dataframe["candle_range"]
+            dataframe["close"] > (dataframe["low"] + 0.6 * dataframe["candle_range"])
         )
         dataframe["bearish_candle"] = (
-            dataframe["close"] < dataframe["high"] - 0.7 * dataframe["candle_range"]
+            dataframe["close"] < (dataframe["high"] - 0.6 * dataframe["candle_range"])
         )
         # Small candle condition: candle range must be smaller than small_candle_ratio * ATR
         dataframe["small_candle"] = dataframe["candle_range"] < (
