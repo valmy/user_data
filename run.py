@@ -471,41 +471,80 @@ if do_generate_charts:
                             line_color="rgba(200, 200, 200, 0.5)")
 
             elif row2_type == 'macd':
-                # MACD with conditional coloring
-                # Add Primary Timeframe MACD line with conditional coloring
+                # MACD with dynamic state-based coloring using precomputed convergence booleans
+                # States:
+                # - bullc: data_red[f"bullish_convergence_{strategy.primary_timeframe}"] == True
+                # - bearc: data_red[f"bearish_convergence_{strategy.primary_timeframe}"] == True
+                # - neutral: neither bullc nor bearc
                 primary_macd_col = f"MACD_12_26_9_{strategy.primary_timeframe}"
+                bullc_col = f"bullish_convergence_{strategy.primary_timeframe}"
+                bearc_col = f"bearish_convergence_{strategy.primary_timeframe}"
                 if primary_macd_col in data_red.columns:
-                    primary_macd_data = data_red[primary_macd_col]
+                    macd = pd.to_numeric(data_red[primary_macd_col], errors='coerce')
 
-                    # Positive Primary MACD values (light green)
-                    positive_mask = primary_macd_data >= 0
-                    if positive_mask.any():
-                        fig.add_trace(go.Scatter(
-                            x=data_red.date[positive_mask],
-                            y=primary_macd_data[positive_mask],
-                            name=f'Primary MACD (+)',
-                            line=dict(color='lightgreen', width=1),
-                            mode='lines',
-                            connectgaps=False
-                        ), row=2, col=1)
+                    # Use provided boolean columns; handle absence gracefully
+                    has_bull = bullc_col in data_red.columns
+                    has_bear = bearc_col in data_red.columns
+                    is_bullc = data_red[bullc_col].fillna(False) if has_bull else pd.Series(False, index=data_red.index)
+                    is_bearc = data_red[bearc_col].fillna(False) if has_bear else pd.Series(False, index=data_red.index)
 
-                    # Negative Primary MACD values (light red)
-                    negative_mask = primary_macd_data < 0
-                    if negative_mask.any():
-                        fig.add_trace(go.Scatter(
-                            x=data_red.date[negative_mask],
-                            y=primary_macd_data[negative_mask],
-                            name=f'Primary MACD (-)',
-                            line=dict(color='lightcoral', width=1),
-                            mode='lines',
-                            connectgaps=False
-                        ), row=2, col=1)
+                    # Neutral where neither is true; also treat NaN macd as neutral to avoid artifacts
+                    is_neutral = (~is_bullc) & (~is_bearc) | macd.isna()
 
-                # Add zero line for MACD
+                    # Build masked series; NaNs break lines between segments without gaps along transitions
+                    macd_bull = macd.where(is_bullc)
+                    macd_bear = macd.where(is_bearc)
+                    macd_neut = macd.where(is_neutral)
+
+                    # Legend grouping so the three traces describe one continuous MACD line
+                    lg = "primary-macd-state"
+
+                    # Accessible, high-contrast colors on dark background
+                    color_bull = "#00E5FF"   # cyan (bullish convergence)
+                    color_bear = "#FFB000"   # orange (Okabe-Ito) (bearish convergence)
+                    color_neut = "#B3B3B3"   # light gray (neutral)
+
+                    # Bullish convergence segment
+                    fig.add_trace(go.Scatter(
+                        x=data_red.date,
+                        y=macd_bull,
+                        name="MACD — Bullish convergence",
+                        mode="lines",
+                        line=dict(color=color_bull, width=1.5),
+                        connectgaps=False,
+                        legendgroup=lg,
+                        showlegend=True
+                    ), row=2, col=1)
+
+                    # Bearish convergence segment
+                    fig.add_trace(go.Scatter(
+                        x=data_red.date,
+                        y=macd_bear,
+                        name="MACD — Bearish convergence",
+                        mode="lines",
+                        line=dict(color=color_bear, width=1.5),
+                        connectgaps=False,
+                        legendgroup=lg,
+                        showlegend=True
+                    ), row=2, col=1)
+
+                    # Neutral segment
+                    fig.add_trace(go.Scatter(
+                        x=data_red.date,
+                        y=macd_neut,
+                        name="MACD — Neutral",
+                        mode="lines",
+                        line=dict(color=color_neut, width=1.5, dash="dot"),
+                        connectgaps=False,
+                        legendgroup=lg,
+                        showlegend=True
+                    ), row=2, col=1)
+
+                # Zero line for MACD
                 fig.add_hline(y=0, line_dash="dash", row=2, col=1,
-                            annotation_text="Zero Line",
-                            annotation_position="bottom right",
-                            line_color="rgba(200, 200, 200, 0.3)")
+                              annotation_text="Zero Line",
+                              annotation_position="bottom right",
+                              line_color="rgba(200, 200, 200, 0.3)")
 
             # Add Choppiness Index for primary timeframe
             primary_chop_col = f'chop_{primary_timeframe}'
@@ -660,3 +699,5 @@ if not all_trades.empty:
     print(all_trades.groupby("pair")["exit_reason"].value_counts())
 else:
     print("No trades to group by.")
+
+#

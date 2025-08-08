@@ -131,12 +131,12 @@ class FractalStrategy(IStrategy):
     use_breakout_trigger = BooleanParameter(default=False, space="buy", optimize=False)
 
     # Parameters for find_peaks
-    peak_distance = IntParameter(3, 10, default=5, space="buy", optimize=True)
+    peak_distance = IntParameter(3, 10, default=5, space="breakout", optimize=True)
     peak_prominence_atr_factor = DecimalParameter(
-        0.5, 2.0, default=1.0, decimals=1, space="buy", optimize=True
+        0.5, 2.0, default=1.0, decimals=1, space="breakout", optimize=True
     )
     macd_prominence_std_factor = DecimalParameter(
-        0.5, 2.0, default=1.0, decimals=1, space="buy", optimize=True
+        0.5, 2.0, default=1.0, decimals=1, space="breakout", optimize=True
     )
 
     # Parameters for tuning
@@ -237,12 +237,17 @@ class FractalStrategy(IStrategy):
         and adds them and their trends to the dataframe.
         """
         # Price peaks and troughs
-        price_prominence = df["atr"].rolling(20).mean() * self.peak_prominence_atr_factor.value
+        # Compute scalar prominence threshold from ATR rolling mean (median to avoid NaN/edge effects)
+        price_prom_series = df["atr"].rolling(20, min_periods=1).mean() * self.peak_prominence_atr_factor.value
+        price_prom_val = float(np.nanmedian(price_prom_series.values))
+        if not np.isfinite(price_prom_val):
+            price_prom_val = 0.0
+
         peak_indices, _ = find_peaks(
-            df["high"], distance=self.peak_distance.value, prominence=price_prominence
+            df["high"], distance=self.peak_distance.value, prominence=price_prom_val
         )
         trough_indices, _ = find_peaks(
-            -df["low"], distance=self.peak_distance.value, prominence=price_prominence
+            (-df["low"]), distance=self.peak_distance.value, prominence=price_prom_val
         )
 
         df["peak_value"] = np.nan
@@ -254,19 +259,24 @@ class FractalStrategy(IStrategy):
         df["trough_value"] = df["trough_value"].ffill()
 
         # MACD peaks and troughs
-        macd_prominence = (
-            df["MACD_12_26_9"].rolling(20).std()
+        # Compute scalar prominence threshold from MACD rolling std (median to avoid NaN/edge effects)
+        macd_std_series = (
+            df["MACD_12_26_9"].rolling(20, min_periods=1).std()
             * self.macd_prominence_std_factor.value
         )
+        macd_prom_val = float(np.nanmedian(macd_std_series.values))
+        if not np.isfinite(macd_prom_val):
+            macd_prom_val = 0.0
+
         macd_peak_indices, _ = find_peaks(
             df["MACD_12_26_9"],
             distance=self.peak_distance.value,
-            prominence=macd_prominence,
+            prominence=macd_prom_val,
         )
         macd_trough_indices, _ = find_peaks(
-            -df["MACD_12_26_9"],
+            (-df["MACD_12_26_9"]),
             distance=self.peak_distance.value,
-            prominence=macd_prominence,
+            prominence=macd_prom_val,
         )
 
         df["macd_peak_value"] = np.nan
@@ -292,6 +302,11 @@ class FractalStrategy(IStrategy):
         df["macd_peak_decreasing"] = df["macd_peak_value"] < df["macd_peak_value"].shift(window)
         df["macd_trough_increasing"] = df["macd_trough_value"] > df["macd_trough_value"].shift(window)
         df["macd_trough_decreasing"] = df["macd_trough_value"] < df["macd_trough_value"].shift(window)
+
+        df["bullish_convergence"] = df["peak_increasing"] & df["macd_peak_increasing"]
+        df["bearish_convergence"] = df["trough_decreasing"] & df["macd_trough_decreasing"]
+        df["bullish_divergence"] = df["trough_decreasing"] & df["macd_trough_increasing"]
+        df["bearish_divergence"] = df["peak_increasing"] & df["macd_peak_decreasing"]
 
         return df
 
@@ -392,6 +407,7 @@ class FractalStrategy(IStrategy):
                                        + self.breakout_stop_ratio.value * dataframe["atr"])
         # MACD
         dataframe.ta.macd(fast=12, slow=26, signal=9, append=True)
+        dataframe = self._populate_pivots(dataframe, self.convergence_window.value)
 
         # Choppiness Index
         dataframe["chop"] = pta.chop(
@@ -753,12 +769,10 @@ class FractalStrategy(IStrategy):
                 )
                 long_breakout_trigger = (
                     qtpylib.crossed_above(df["close"], df[major_peak_col])
-                    & (df["bullish_candle"])
                     & (df[major_peak_col] == df[major_peak_col].shift(1))
                 )
                 short_breakout_trigger = (
                     qtpylib.crossed_below(df["close"], df[major_trough_col])
-                    & (df["bearish_candle"])
                     & (df[major_trough_col] == df[major_trough_col].shift(1))
                 )
 
