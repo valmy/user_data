@@ -19,7 +19,7 @@
       "convergence_window": 3,
       "major_chop_threshold": 40,
       "max_risk_per_trade": 0.02,
-      "use_breakout_trigger": true,
+      "use_breakout_trigger": false,
       "use_cradle_trigger": false,
       "use_lrsi_trigger": true,
       "laguerre_gamma": 0.6,
