@@ -43,8 +43,8 @@ config = Configuration.from_files(["user_data/config-backtest.json"])
 # Location of the data
 data_location = config["datadir"]
 
-do_generate_charts = True
-row2_type = 'macd'  # macd or lrsi
+do_generate_charts = False
+row2_type = 'lrsi'  # macd or lrsi
 
 # Date range configuration
 date_range_days = 0  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)

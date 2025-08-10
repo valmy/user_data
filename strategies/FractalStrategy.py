@@ -698,7 +698,7 @@ class FractalStrategy(IStrategy):
                 short_lrsi_trigger = qtpylib.crossed_below(df["laguerre"], self.sell_laguerre_level.value)
 
                 # Populate pivots and their trends
-                df = self._populate_pivots(df, self.convergence_window.value)
+                # df = self._populate_pivots(df, self.convergence_window.value)
 
                 # Cradle Triggers
                 long_cradle_base = (
@@ -910,14 +910,21 @@ class FractalStrategy(IStrategy):
                 # Exit LONG positions based on entry type
                 exit_long_lrsi = (df["close"] < df[long_stop_col])
                 exit_long_cradle = (df["close"] < df[long_cradle_stop_col])
-                exit_long_breakout = (df["close"] < (df[major_peak_col]
-                    - self.breakout_stop_ratio.value * df[primary_atr_col]))
+                stoploss_size = self.breakout_stop_ratio.value * df[primary_atr_col]
+                if self.use_breakout_trigger.value:
+                    peak_atr_diff = df[major_peak_col] - stoploss_size
+                    exit_long_breakout = df["close"] < peak_atr_diff
+                else:
+                    exit_long_breakout = False
 
                 # Exit SHORT positions based on entry type
                 exit_short_lrsi = (df["close"] > df[short_stop_col])
                 exit_short_cradle = (df["close"] > df[short_cradle_stop_col])
-                exit_short_breakout = (df["close"] > (df[major_trough_col]
-                    + self.breakout_stop_ratio.value * df[primary_atr_col]))
+                if self.use_breakout_trigger.value:
+                    trough_atr_diff = df[major_trough_col] + stoploss_size
+                    exit_short_breakout = df["close"] > trough_atr_diff
+                else:
+                    exit_short_breakout = False
 
                 # Apply exit conditions
                 df.loc[exit_long_lrsi | exit_long_cradle | exit_long_breakout, 'exit_long'] = 1
@@ -964,14 +971,15 @@ class FractalStrategy(IStrategy):
         if len(dataframe) < 2:
             return False
 
-        last_candle = dataframe.iloc[-2]  # Previous candle
+        prev_candle = dataframe.iloc[-2].squeeze()
+        last_candle = dataframe.iloc[-1].squeeze()
 
         if entry_tag == 'cradle':
             if side == "long":
-                if rate > last_candle['high']:
+                if rate > prev_candle['high']:
                     return True
             elif side == "short":
-                if rate < last_candle['low']:
+                if rate < prev_candle['low']:
                     return True
             return False
 
