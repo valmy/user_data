@@ -15,7 +15,7 @@ class Config:
     zone_id: str = 'ap-southeast-5a'  # Zone ID in Jakarta region
 
     # Instance configuration
-    instance_type: str = 'ecs.e-c1m2.large'
+    instance_type: str = 'ecs.e-c1m4.large'
     image_id: str = 'ubuntu_24_04_x64_20G_alibase_20250527.vhd'
     ecs_instance_name: str = 'freqtrade-bot'
     key_name: str = 'kintsugi'  # SSH key pair name

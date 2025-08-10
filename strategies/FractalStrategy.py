@@ -63,7 +63,7 @@ class FractalStrategy(IStrategy):
     position_adjustment_enable = True
 
     # Signal timeframe for the strategy - using 15m as primary trend
-    timeframe = "5m"  # Renamed from signal_timeframe
+    timeframe = "3m"  # Renamed from signal_timeframe
     primary_timeframe = "15m"  # This can remain for your internal logic if needed
     major_timeframe = "1h"
     long_timeframe = "4h"
@@ -146,7 +146,7 @@ class FractalStrategy(IStrategy):
 
     # Laguerre RSI parameters
     laguerre_gamma = DecimalParameter(
-        0.6, 0.8, default=0.68, decimals=2, space="buy", load=True, optimize=False
+        0.6, 0.8, default=0.68, decimals=2, space="buy", load=True, optimize=True
     )
     small_candle_ratio = DecimalParameter(
         1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=True
@@ -175,6 +175,7 @@ class FractalStrategy(IStrategy):
         0.01, 0.05, default=0.02, decimals=2, space="buy", load=True, optimize=False
     )
 
+    # Sell parameters
     atr_stop_ratio = DecimalParameter(
         0.05, 10.0, default=5.0, decimals=2, space="sell", load=True, optimize=True
     )
@@ -184,7 +185,7 @@ class FractalStrategy(IStrategy):
     )
 
     slippage = DecimalParameter(
-        0.001, 0.01, default=0.002, decimals=3, space="sell", load=True, optimize=False
+        0.001, 0.01, default=0.001, decimals=3, space="sell", load=True, optimize=False
     )
     down_slippage = 1 - slippage.value
     up_slippage = 1 + slippage.value
