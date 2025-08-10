@@ -30,7 +30,7 @@
     },
     "sell": {
       "sell_laguerre_level": 0.8,
-      "slippage": 0.002,
+      "slippage": 0.001,
       "atr_stop_ratio": 9.94
     },
     "protection": {}

@@ -170,7 +170,7 @@ class FractalStrategy(IStrategy):
     )
 
     slippage = DecimalParameter(
-        0.001, 0.01, default=0.002, decimals=3, space="sell", load=True, optimize=False
+        0.001, 0.01, default=0.001, decimals=3, space="sell", load=True, optimize=False
     )
     down_slippage = 1 - slippage.value
     up_slippage = 1 + slippage.value

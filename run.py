@@ -46,8 +46,8 @@ data_location = config["datadir"]
 do_generate_charts = True
 
 # Date range configuration
-date_range_days = 0  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
-overall_start = "2025-08-01"
+date_range_days = 1  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
+overall_start = "2025-08-08"
 overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=UTC).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
@@ -78,6 +78,7 @@ strategy.dp = DataProvider(config, exchange, None)
 strategy.ft_bot_start()
 
 # get timeframes
+timeframe = strategy.timeframe
 primary_timeframe = strategy.primary_timeframe
 major_timeframe = strategy.major_timeframe
 long_timeframe = strategy.long_timeframe
@@ -219,7 +220,7 @@ if do_generate_charts:
                 # ... (preserve existing chart configuration code here) ...
 
                 # Generate HTML filename
-                html_filename = f"{project_root}/user_data/chart_5m_{pair_symbol}_{start_date}_{end_date}.html"
+                html_filename = f"{project_root}/user_data/charts/chart_{timeframe}_{pair_symbol}_{start_date}_{end_date}.html"
                 fig.write_html(html_filename)
 
                 # Add navigation controls
@@ -229,18 +230,18 @@ if do_generate_charts:
                     nav_html = f'''
                     <div style="padding: 10px; background: #1f1f1f; display: flex; justify-content: space-between; align-items: center;">
                         <div>
-                            {f'<a href="chart_5m_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
+                            {f'<a href="chart_{timeframe}_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
                             if (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)) >= datetime.strptime(overall_start, "%Y-%m-%d")
                             else '<span style="color: #666; padding: 5px 10px;">← Start</span>'}
                             <span style="color: #888; margin: 0 15px;">{start_date} to {end_date}</span>
-                            {f'<a href="chart_5m_{pair_symbol}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
+                            {f'<a href="chart_{timeframe}_{pair_symbol}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
                             if (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)) <= datetime.strptime(overall_end, "%Y-%m-%d")
                             else '<span style="color: #666; padding: 5px 10px;">End →</span>'}
                         </div>
                         <select onchange="window.location.href=this.value.replace('ASSET',this.options[this.selectedIndex].text)"
                                 style="padding: 5px; background: #333; color: white; border: 1px solid #666; border-radius: 4px;">
                             <option value="">Select Asset</option>
-                            {''.join(f'<option value="chart_5m_ASSET_{start_date}_{end_date}.html">{sym}</option>' for sym in pairs_symbols)}
+                            {''.join(f'<option value="chart_{timeframe}_ASSET_{start_date}_{end_date}.html">{sym}</option>' for sym in pairs_symbols)}
                         </select>
                     </div>
                     '''
@@ -548,8 +549,8 @@ if do_generate_charts:
             fig.update_yaxes(gridcolor='#1f1f1f', zerolinecolor='#1f1f1f')
 
                 # Save the interactive HTML chart
-            html_filename = f"{project_root}/user_data/chart_5m_{pair_symbol}_{start_date}_{end_date}.html"
-            png_filename = f"{project_root}/user_data/chart_5m_{pair_symbol}.png"
+            html_filename = f"{project_root}/user_data/charts/chart_{timeframe}_{pair_symbol}_{start_date}_{end_date}.html"
+            png_filename = f"{project_root}/user_data/charts/chart_{timeframe}_{pair_symbol}.png"
 
             fig.write_html(html_filename)
 
@@ -560,18 +561,18 @@ if do_generate_charts:
                 nav_html = f'''
                 <div style="padding: 10px; background: #1f1f1f; display: flex; justify-content: space-between; align-items: center;">
                     <div>
-                        {f'<a href="chart_5m_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
+                        {f'<a href="chart_{timeframe}_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
                         if (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)) >= datetime.strptime(overall_start, "%Y-%m-%d")
                         else '<span style="color: #666; padding: 5px 10px;">← Start</span>'}
                         <span style="color: #888; margin: 0 15px;">{start_date} to {end_date}</span>
-                        {f'<a href="chart_5m_{pair_symbol}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
+                        {f'<a href="chart_{timeframe}_{pair_symbol}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
                         if (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)) <= datetime.strptime(overall_end, "%Y-%m-%d")
                         else '<span style="color: #666; padding: 5px 10px;">End →</span>'}
                     </div>
                     <select onchange="window.location.href=this.value.replace('ASSET',this.options[this.selectedIndex].text)"
                             style="padding: 5px; background: #333; color: white; border: 1px solid #666; border-radius: 4px;">
                         <option value="">Select Asset</option>
-                        {''.join(f'<option value="chart_5m_ASSET_{start_date}_{end_date}.html">{sym}</option>' for sym in pairs_symbols)}
+                        {''.join(f'<option value="chart_{timeframe}_ASSET_{start_date}_{end_date}.html">{sym}</option>' for sym in pairs_symbols)}
                     </select>
                 </div>
                 '''
