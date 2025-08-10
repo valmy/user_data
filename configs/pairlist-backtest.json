@@ -20,6 +20,7 @@
       "FARTCOIN/USDT:USDT",
       "CFX/USDT:USDT",
       "ARB/USDT:USDT",
+      "WIF/USDT:USDT",
       "PENDLE/USDT:USDT",
       "XLM/USDT:USDT",
       "LTC/USDT:USDT"
@@ -41,8 +42,11 @@
       // "PENGU/USDT:USDT",
       // "FARTCOIN/USDT:USDT",
       // "CFX/USDT:USDT",
-      // "ARB/USDT:USDT"
-      // "PENDLE/USDT:USDT"
+      // "ARB/USDT:USDT",
+      // "WIF/USDT:USDT",
+      // "PENDLE/USDT:USDT",
+      // "XLM/USDT:USDT",
+      // "LTC/USDT:USDT"
     ]
   },
   "pairlists": [

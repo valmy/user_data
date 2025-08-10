@@ -104,12 +104,21 @@ df = loaded_strategy.analyze_ticker(candles, {"pair": pair})
 
 
 # Strategy and exchange are already loaded above
+import json
 
-# print(candles)
+# print(json.dumps(df.columns, indent=2, default=str))
+import pandas as pd
+pd.set_option('display.max_columns', None)
+print("All available columns:")
+print(df.columns.tolist())
 print(df.loc[
-    (df['date'] >= datetime(2025, 7, 15, 7, 30, tzinfo=UTC)) &
-    (df['date'] <= datetime(2025, 7, 15, 8, 15, tzinfo=UTC)),
-    ['date', 'high', 'low', 'trough_15m', 'peak_15m', 'donchian_upper_15m', 'donchian_lower_15m']
+    (df['date'] >= datetime(2025, 8, 1, 7, 30, tzinfo=UTC)) &
+    (df['date'] <= datetime(2025, 8, 1, 22, 15, tzinfo=UTC))
+    & (
+        df['bullish_convergence_15m']
+        | df['bearish_convergence_15m']
+    ),
+    ['date', 'high', 'low', 'bullish_convergence_15m', 'bearish_convergence_15m']
 ])
 # print(all_trades)
 
@@ -123,14 +132,13 @@ annotations = loaded_strategy.plot_annotations(
     dataframe=df,
 )
 
-pprint.pprint(annotations)
+# pprint.pprint(annotations)
 
-import json
 
 
 # Convert the DataFrame to a list of dictionaries
 trades_list = all_trades.to_dict('records')
 
 # Convert to pretty-printed JSON
-print("\nFull trades data in JSON format:")
-print(json.dumps(trades_list, indent=2, default=str))
+# print("\nFull trades data in JSON format:")
+# print(json.dumps(trades_list, indent=2, default=str))

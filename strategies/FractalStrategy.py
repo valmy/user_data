@@ -2,6 +2,7 @@
 # flake8: noqa: F401
 # isort: skip_file
 # --- Do not remove these imports ---
+from os import major
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta, timezone
@@ -33,6 +34,7 @@ from freqtrade.strategy import (
 import talib.abstract as ta
 import pandas_ta as pta
 from technical import indicators, qtpylib
+from scipy.signal import find_peaks
 
 import logging
 import traceback  # Import traceback for detailed error logging
@@ -128,6 +130,15 @@ class FractalStrategy(IStrategy):
     convergence_window = IntParameter(3, 10, default=5, space="buy", optimize=False)
     use_breakout_trigger = BooleanParameter(default=False, space="buy", optimize=False)
 
+    # Parameters for find_peaks
+    peak_distance = IntParameter(3, 10, default=5, space="breakout", optimize=True)
+    peak_prominence_atr_factor = DecimalParameter(
+        0.5, 2.0, default=1.0, decimals=1, space="breakout", optimize=True
+    )
+    macd_prominence_std_factor = DecimalParameter(
+        0.5, 2.0, default=1.0, decimals=1, space="breakout", optimize=True
+    )
+
     # Parameters for tuning
     volume_threshold = DecimalParameter(
         1.0, 4.0, default=2, decimals=1, space="buy", optimize=True
@@ -167,6 +178,10 @@ class FractalStrategy(IStrategy):
     # Sell parameters
     atr_stop_ratio = DecimalParameter(
         0.05, 10.0, default=5.0, decimals=2, space="sell", load=True, optimize=True
+    )
+
+    breakout_stop_ratio = DecimalParameter(
+        1.0, 5.0, default=2.0, decimals=1, space="sell", load=True, optimize=False
     )
 
     slippage = DecimalParameter(
@@ -216,6 +231,85 @@ class FractalStrategy(IStrategy):
 
         return informative_pairs
 
+
+    def _populate_pivots(self, df: DataFrame, window: int) -> DataFrame:
+        """
+        Finds peaks and troughs for price and MACD using scipy.signal.find_peaks
+        and adds them and their trends to the dataframe.
+        """
+        # Price peaks and troughs
+        # Compute scalar prominence threshold from ATR rolling mean (median to avoid NaN/edge effects)
+        price_prom_series = df["atr"].rolling(20, min_periods=1).mean() * self.peak_prominence_atr_factor.value
+        price_prom_val = float(np.nanmedian(price_prom_series.values))
+        if not np.isfinite(price_prom_val):
+            price_prom_val = 0.0
+
+        peak_indices, _ = find_peaks(
+            df["high"], distance=self.peak_distance.value, prominence=price_prom_val
+        )
+        trough_indices, _ = find_peaks(
+            (-df["low"]), distance=self.peak_distance.value, prominence=price_prom_val
+        )
+
+        df["peak_value"] = np.nan
+        df.loc[df.index[peak_indices], "peak_value"] = df["high"].iloc[peak_indices]
+        df["peak_value"] = df["peak_value"].ffill()
+
+        df["trough_value"] = np.nan
+        df.loc[df.index[trough_indices], "trough_value"] = df["low"].iloc[trough_indices]
+        df["trough_value"] = df["trough_value"].ffill()
+
+        # MACD peaks and troughs
+        # Compute scalar prominence threshold from MACD rolling std (median to avoid NaN/edge effects)
+        macd_std_series = (
+            df["MACD_12_26_9"].rolling(20, min_periods=1).std()
+            * self.macd_prominence_std_factor.value
+        )
+        macd_prom_val = float(np.nanmedian(macd_std_series.values))
+        if not np.isfinite(macd_prom_val):
+            macd_prom_val = 0.0
+
+        macd_peak_indices, _ = find_peaks(
+            df["MACD_12_26_9"],
+            distance=self.peak_distance.value,
+            prominence=macd_prom_val,
+        )
+        macd_trough_indices, _ = find_peaks(
+            (-df["MACD_12_26_9"]),
+            distance=self.peak_distance.value,
+            prominence=macd_prom_val,
+        )
+
+        df["macd_peak_value"] = np.nan
+        df.loc[df.index[macd_peak_indices], "macd_peak_value"] = df["MACD_12_26_9"].iloc[
+            macd_peak_indices
+        ]
+        df["macd_peak_value"] = df["macd_peak_value"].ffill()
+
+        df["macd_trough_value"] = np.nan
+        df.loc[df.index[macd_trough_indices], "macd_trough_value"] = df["MACD_12_26_9"].iloc[
+            macd_trough_indices
+        ]
+        df["macd_trough_value"] = df["macd_trough_value"].ffill()
+
+        # Identify increasing/decreasing peaks and troughs
+        df["peak_increasing"] = df["peak_value"] > df["peak_value"].shift(window)
+        df["peak_decreasing"] = df["peak_value"] < df["peak_value"].shift(window)
+        df["trough_increasing"] = df["trough_value"] > df["trough_value"].shift(window)
+        df["trough_decreasing"] = df["trough_value"] < df["trough_value"].shift(window)
+
+        # Identify increasing/decreasing MACD peaks and troughs
+        df["macd_peak_increasing"] = df["macd_peak_value"] > df["macd_peak_value"].shift(window)
+        df["macd_peak_decreasing"] = df["macd_peak_value"] < df["macd_peak_value"].shift(window)
+        df["macd_trough_increasing"] = df["macd_trough_value"] > df["macd_trough_value"].shift(window)
+        df["macd_trough_decreasing"] = df["macd_trough_value"] < df["macd_trough_value"].shift(window)
+
+        df["bullish_convergence"] = df["peak_increasing"] & df["macd_peak_increasing"]
+        df["bearish_convergence"] = df["trough_decreasing"] & df["macd_trough_decreasing"]
+        df["bullish_divergence"] = df["trough_decreasing"] & df["macd_trough_increasing"]
+        df["bearish_divergence"] = df["peak_increasing"] & df["macd_peak_decreasing"]
+
+        return df
 
     @informative(primary_timeframe)
     def populate_informative_primary(
@@ -305,6 +399,16 @@ class FractalStrategy(IStrategy):
 
         # Note: You might want to drop the temporary columns if they are not used elsewhere:
         dataframe.drop(["peak_trend_temp", "trough_trend_temp"], axis=1, inplace=True)
+
+        # ATR
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod=14)
+        dataframe["long_atr_stop"] = (dataframe["close"]
+                                      - self.breakout_stop_ratio.value * dataframe["atr"])
+        dataframe["short_atr_stop"] = (dataframe["close"]
+                                       + self.breakout_stop_ratio.value * dataframe["atr"])
+        # MACD
+        dataframe.ta.macd(fast=12, slow=26, signal=9, append=True)
+        dataframe = self._populate_pivots(dataframe, self.convergence_window.value)
 
         # Choppiness Index
         dataframe["chop"] = pta.chop(
@@ -569,10 +673,6 @@ class FractalStrategy(IStrategy):
                     <= df[f"peak_{self.primary_timeframe}"]
                 )
 
-                # Add close - 2 * atr requirement for long entries
-                df["close_minus_2atr"] = df["close"] - 2 * df["atr"]
-                df["close_above_close_minus_2atr"] = df["close"] > df["close_minus_2atr"]
-
                 # RR ratio calculation
                 df["long_rr_ratio"] = (
                     (df[f"donchian_upper_{self.major_timeframe}"] - df["close"])
@@ -597,74 +697,8 @@ class FractalStrategy(IStrategy):
                 long_lrsi_trigger = qtpylib.crossed_above(df["laguerre"], self.buy_laguerre_level.value)
                 short_lrsi_trigger = qtpylib.crossed_below(df["laguerre"], self.sell_laguerre_level.value)
 
-                # Detect peaks and troughs in signal timeframe (5m) using proper fractal analysis
-                # Peak: A confirmed peak occurs at shift(2) when that candle's high is higher than
-                # both the 2 candles before it AND the 2 candles after it (current implementation)
-                df["is_peak"] = (
-                    (df["high"].shift(2) >= df["high"].shift(4)) &  # Higher than 2 candles before
-                    (df["high"].shift(2) >= df["high"].shift(3)) &  # Higher than 1 candle before
-                    (df["high"].shift(2) >= df["high"].shift(1)) &  # Higher than 1 candle after
-                    (df["high"].shift(2) >= df["high"])             # Higher than current candle
-                )
-
-                # Trough: A confirmed trough occurs at shift(2) when that candle's low is lower than
-                # both the 2 candles before it AND the 2 candles after it (current implementation)
-                df["is_trough"] = (
-                    (df["low"].shift(2) <= df["low"].shift(4)) &   # Lower than 2 candles before
-                    (df["low"].shift(2) <= df["low"].shift(3)) &   # Lower than 1 candle before
-                    (df["low"].shift(2) <= df["low"].shift(1)) &   # Lower than 1 candle after
-                    (df["low"].shift(2) <= df["low"])              # Lower than current candle
-                )
-
-                # Identify peak and trough values using the confirmed fractal points
-                df["peak_value"] = np.where(df["is_peak"], df["high"].shift(2), np.nan)
-                df["peak_value"] = df["peak_value"].ffill()
-                df["trough_value"] = np.where(df["is_trough"], df["low"].shift(2), np.nan)
-                df["trough_value"] = df["trough_value"].ffill()
-
-                # Identify increasing/decreasing peaks and troughs
-                # For peaks: compare current peak with previous peak
-                window = self.convergence_window.value
-                df["peak_increasing"] = df["peak_value"] > df["peak_value"].shift(window)
-                df["peak_decreasing"] = df["peak_value"] < df["peak_value"].shift(window)
-
-                # For troughs: compare current trough with previous trough
-                df["trough_increasing"] = df["trough_value"] > df["trough_value"].shift(window)
-                df["trough_decreasing"] = df["trough_value"] < df["trough_value"].shift(window)
-
-                # Identify MACD peaks and troughs using proper fractal analysis
-                # MACD Peak: A confirmed peak occurs at shift(2) when that value is higher than
-                # both the 2 values before it AND the 2 values after it
-                df["macd_peak"] = (
-                    (df["MACD_12_26_9"].shift(2) >= df["MACD_12_26_9"].shift(4)) &  # Higher than 2 periods before
-                    (df["MACD_12_26_9"].shift(2) >= df["MACD_12_26_9"].shift(3)) &  # Higher than 1 period before
-                    (df["MACD_12_26_9"].shift(2) >= df["MACD_12_26_9"].shift(1)) &  # Higher than 1 period after
-                    (df["MACD_12_26_9"].shift(2) >= df["MACD_12_26_9"])             # Higher than current period
-                )
-
-                # MACD Trough: A confirmed trough occurs at shift(2) when that value is lower than
-                # both the 2 values before it AND the 2 values after it
-                df["macd_trough"] = (
-                    (df["MACD_12_26_9"].shift(2) <= df["MACD_12_26_9"].shift(4)) &  # Lower than 2 periods before
-                    (df["MACD_12_26_9"].shift(2) <= df["MACD_12_26_9"].shift(3)) &  # Lower than 1 period before
-                    (df["MACD_12_26_9"].shift(2) <= df["MACD_12_26_9"].shift(1)) &  # Lower than 1 period after
-                    (df["MACD_12_26_9"].shift(2) <= df["MACD_12_26_9"])             # Lower than current period
-                )
-
-                # Identify MACD peak and trough values using the confirmed fractal points
-                df["macd_peak_value"] = np.where(df["macd_peak"], df["MACD_12_26_9"].shift(2), np.nan)
-                df["macd_peak_value"] = df["macd_peak_value"].ffill()
-                df["macd_trough_value"] = np.where(df["macd_trough"], df["MACD_12_26_9"].shift(2), np.nan)
-                df["macd_trough_value"] = df["macd_trough_value"].ffill()
-
-                # Identify increasing/decreasing MACD peaks and troughs
-                # For MACD peaks: compare current peak with previous peak
-                df["macd_peak_increasing"] = df["macd_peak_value"] > df["macd_peak_value"].shift(window)
-                df["macd_peak_decreasing"] = df["macd_peak_value"] < df["macd_peak_value"].shift(window)
-
-                # For MACD troughs: compare current trough with previous trough
-                df["macd_trough_increasing"] = df["macd_trough_value"] > df["macd_trough_value"].shift(window)
-                df["macd_trough_decreasing"] = df["macd_trough_value"] < df["macd_trough_value"].shift(window)
+                # Populate pivots and their trends
+                # df = self._populate_pivots(df, self.convergence_window.value)
 
                 # Cradle Triggers
                 long_cradle_base = (
@@ -717,13 +751,30 @@ class FractalStrategy(IStrategy):
                     )
 
                 # Breakout Triggers
+                major_peak_col = f"peak_{self.major_timeframe}"
+                major_trough_col = f"trough_{self.major_timeframe}"
+                primary_peak_col = f"peak_{self.primary_timeframe}"
+                primary_trough_col = f"trough_{self.primary_timeframe}"
+
+                long_breakout_condition = (
+                    cond_ptf_chop
+                    & (df[f"higher_low_{self.primary_timeframe}"])
+                    & (df[f"higher_low_{self.major_timeframe}"])
+                    & (df["close"] > df[primary_peak_col]) # in case primary peak is higher than major
+                )
+                short_breakout_condition = (
+                    cond_ptf_chop
+                    & (df[f"lower_high_{self.primary_timeframe}"])
+                    & (df[f"lower_high_{self.major_timeframe}"])
+                    & (df["close"] < df[primary_trough_col])
+                )
                 long_breakout_trigger = (
-                    qtpylib.crossed_above(df["close"], df["donchian_upper"].shift(1))
-                    & (df["bullish_candle"])
+                    qtpylib.crossed_above(df["close"], df[major_peak_col])
+                    & (df[major_peak_col] == df[major_peak_col].shift(1))
                 )
                 short_breakout_trigger = (
-                    qtpylib.crossed_below(df["close"], df["donchian_lower"].shift(1))
-                    & (df["bearish_candle"])
+                    qtpylib.crossed_below(df["close"], df[major_trough_col])
+                    & (df[major_trough_col] == df[major_trough_col].shift(1))
                 )
 
                 # --- Base Entry Conditions (excluding triggers) ---
@@ -745,7 +796,8 @@ class FractalStrategy(IStrategy):
                 # --- Combine Triggers and Base Conditions ---
                 # Long Entries
                 if self.use_breakout_trigger.value:
-                    long_condition = base_long_condition & long_breakout_trigger
+                    long_condition = (base_long_condition & long_breakout_trigger
+                                    & long_breakout_condition)
                     df.loc[long_condition, ["enter_long", "enter_tag"]] = (1, "breakout")
 
                 # Use cradle trigger
@@ -765,7 +817,8 @@ class FractalStrategy(IStrategy):
                 # Short Entries
                 if self.can_short:
                     if self.use_breakout_trigger.value:
-                        short_condition = base_short_condition & short_breakout_trigger
+                        short_condition = (base_short_condition & short_breakout_trigger
+                                           & short_breakout_condition)
                         df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "breakout")
 
                     # Use cradle trigger
@@ -828,12 +881,16 @@ class FractalStrategy(IStrategy):
                 short_cradle_stop_col = "stop_upper"
 
                 # For breakout entries
-                long_breakout_stop_col = "close_minus_2atr"
-                short_breakout_stop_col = "close_plus_2atr"
+                # long_breakout_stop_col = "close_minus_2atr"
+                # short_breakout_stop_col = "close_plus_2atr"
+                primary_atr_col = f"atr_{self.primary_timeframe}"
+                major_peak_col = f"peak_{self.major_timeframe}"
+                major_trough_col = f"trough_{self.major_timeframe}"
 
                 missing_cols = []
                 required_cols = [long_stop_col, short_stop_col, long_cradle_stop_col,
-                                short_cradle_stop_col, long_breakout_stop_col, short_breakout_stop_col]
+                                short_cradle_stop_col, primary_atr_col, major_peak_col,
+                                major_trough_col]
 
                 for col in required_cols:
                     if col not in df.columns:
@@ -853,16 +910,25 @@ class FractalStrategy(IStrategy):
                 # Exit LONG positions based on entry type
                 exit_long_lrsi = (df["close"] < df[long_stop_col])
                 exit_long_cradle = (df["close"] < df[long_cradle_stop_col])
-                # exit_long_breakout = (df["close"] < df[long_breakout_stop_col]) & is_breakout_entry
+                stoploss_size = self.breakout_stop_ratio.value * df[primary_atr_col]
+                if self.use_breakout_trigger.value:
+                    peak_atr_diff = df[major_peak_col] - stoploss_size
+                    exit_long_breakout = df["close"] < peak_atr_diff
+                else:
+                    exit_long_breakout = False
 
                 # Exit SHORT positions based on entry type
                 exit_short_lrsi = (df["close"] > df[short_stop_col])
                 exit_short_cradle = (df["close"] > df[short_cradle_stop_col])
-                # exit_short_breakout = (df["close"] > df[short_breakout_stop_col]) & is_breakout_entry
+                if self.use_breakout_trigger.value:
+                    trough_atr_diff = df[major_trough_col] + stoploss_size
+                    exit_short_breakout = df["close"] > trough_atr_diff
+                else:
+                    exit_short_breakout = False
 
                 # Apply exit conditions
-                df.loc[exit_long_lrsi | exit_long_cradle, 'exit_long'] = 1
-                df.loc[exit_short_lrsi | exit_short_cradle, 'exit_short'] = 1
+                df.loc[exit_long_lrsi | exit_long_cradle | exit_long_breakout, 'exit_long'] = 1
+                df.loc[exit_short_lrsi | exit_short_cradle | exit_short_breakout, 'exit_short'] = 1
 
                 return df
             except Exception as e_inner:
@@ -905,23 +971,24 @@ class FractalStrategy(IStrategy):
         if len(dataframe) < 2:
             return False
 
-        last_candle = dataframe.iloc[-2]  # Previous candle
+        prev_candle = dataframe.iloc[-2].squeeze()
+        last_candle = dataframe.iloc[-1].squeeze()
 
         if entry_tag == 'cradle':
             if side == "long":
-                if rate > last_candle['high']:
+                if rate > prev_candle['high']:
                     return True
             elif side == "short":
-                if rate < last_candle['low']:
+                if rate < prev_candle['low']:
                     return True
             return False
 
         elif entry_tag == 'breakout':
             if side == "long":
-                if rate > last_candle['close_minus_2atr']:
+                if rate > last_candle[f"peak_{self.major_timeframe}"]:
                     return True
             elif side == "short":
-                if rate < last_candle['close_plus_2atr']:
+                if rate < last_candle[f"trough_{self.major_timeframe}"]:
                     return True
             return False
 
@@ -1034,12 +1101,12 @@ class FractalStrategy(IStrategy):
 
         elif entry_tag == "breakout":
             if side == "long":
-                raw_stop_price = last_candle.get("close_minus_2atr")
+                raw_stop_price = last_candle.get(f"long_atr_stop_{self.primary_timeframe}")
                 stop_loss_price = raw_stop_price * self.down_slippage
                 price_diff_to_stop = trade.open_rate - stop_loss_price
                 take_profit_price = trade.open_rate + price_diff_to_stop
             elif side == "short":
-                raw_stop_price = last_candle.get("close_plus_2atr")
+                raw_stop_price = last_candle.get(f"short_atr_stop_{self.primary_timeframe}")
                 stop_loss_price = raw_stop_price * self.up_slippage
                 price_diff_to_stop = stop_loss_price - trade.open_rate
                 take_profit_price = trade.open_rate - price_diff_to_stop
@@ -1195,14 +1262,13 @@ class FractalStrategy(IStrategy):
                             f"Price decreased: {price_decreased}"
                         )
 
+                # Update dynamic stop and determine stop loss price
                 # For long positions
                 if not trade.is_short:
                     # Get the current stop value based on entry type
                     if entry_tag == "cradle":
                         current_stop = last_candle.get("stop_lower", 0)
-                    elif entry_tag == "breakout":
-                        current_stop = last_candle.get("close_minus_2atr", 0)
-                    else:  # Default to lrsi
+                    else:  # for breakout and lrsi
                         current_stop = last_candle.get(f"trough_{self.primary_timeframe}", 0)
 
                     # Update dynamic stop if we're using dynamic stop and current stop is higher
@@ -1224,9 +1290,7 @@ class FractalStrategy(IStrategy):
                     # Get the current stop value based on entry type
                     if entry_tag == "cradle":
                         current_stop = last_candle.get("stop_upper", float("inf"))
-                    elif entry_tag == "breakout":
-                        current_stop = last_candle.get("close_plus_2atr", float("inf"))
-                    else:  # Default to lrsi
+                    else:  # for breakout and lrsi
                         current_stop = last_candle.get(f"peak_{self.primary_timeframe}", float("inf"))
 
                     # Update dynamic stop if we're using dynamic stop and current stop is lower
@@ -1434,10 +1498,11 @@ class FractalStrategy(IStrategy):
                 price_diff_to_stop = stop_loss_price - current_rate
         elif entry_tag == "breakout":
             if side == "long":
-                raw_stop_price = last_candle.get("close_minus_2atr")
+                raw_stop_price = last_candle.get(f"long_atr_stop_{self.primary_timeframe}")
                 if pd.isna(raw_stop_price):
                     logger.warning(
-                        f"Leverage: close_minus_2atr is np.nan for {pair} on {current_time}."
+                        f"Leverage: long_atr_stop_{self.primary_timeframe} is np.nan for {pair} "
+                        f"on {current_time}."
                     )
                     return 0.0  # Stop-loss level not found or np.nan
                 stop_loss_price = raw_stop_price * self.down_slippage
@@ -1445,10 +1510,11 @@ class FractalStrategy(IStrategy):
                     return 0.0  # Invalid stop-loss for long
                 price_diff_to_stop = current_rate - stop_loss_price
             elif side == "short":
-                raw_stop_price = last_candle.get("close_plus_2atr")
+                raw_stop_price = last_candle.get(f"short_atr_stop_{self.primary_timeframe}")
                 if pd.isna(raw_stop_price):
                     logger.warning(
-                        f"Leverage: close_plus_2atr is np.nan for {pair} on {current_time}."
+                        f"Leverage: short_atr_stop_{self.primary_timeframe} is np.nan for {pair} "
+                        f"on {current_time}."
                     )
                     return 0.0  # Stop-loss level not found or np.nan
                 stop_loss_price = raw_stop_price * self.up_slippage

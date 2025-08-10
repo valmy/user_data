@@ -43,7 +43,8 @@ config = Configuration.from_files(["user_data/config-backtest.json"])
 # Location of the data
 data_location = config["datadir"]
 
-do_generate_charts = True
+do_generate_charts = False
+row2_type = 'lrsi'  # macd or lrsi
 
 # Date range configuration
 date_range_days = 0  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
@@ -449,32 +450,102 @@ if do_generate_charts:
                         hoverinfo='skip'
                     ), row=1, col=1)
 
-            # Add Laguerre RSI line
-            if 'laguerre' in data_red.columns:
-                fig.add_trace(go.Scatter(
-                    x=data_red.date,
-                    y=data_red['laguerre'],
-                    name='Laguerre RSI',
-                    line=dict(color='yellow', width=1)
-                ), row=2, col=1)
+            # Conditional rendering based on row2_type switch
+            if row2_type == 'lrsi':
+                # Add Laguerre RSI line
+                if 'laguerre' in data_red.columns:
+                    fig.add_trace(go.Scatter(
+                        x=data_red.date,
+                        y=data_red['laguerre'],
+                        name='Laguerre RSI',
+                        line=dict(color='yellow', width=1)
+                    ), row=2, col=1)
 
-            # Add horizontal lines at 0.2 and 0.8 for Laguerre RSI
-            fig.add_hline(y=0.8, line_dash="dash", row=2, col=1,
-                        annotation_text="Overbought (0.8)",
-                        annotation_position="bottom right",
-                        line_color="rgba(200, 200, 200, 0.5)")
-            fig.add_hline(y=0.2, line_dash="dash", row=2, col=1,
-                        annotation_text="Oversold (0.2)",
-                        annotation_position="bottom right",
-                        line_color="rgba(200, 200, 200, 0.5)")
+                # Add horizontal lines at 0.2 and 0.8 for Laguerre RSI
+                fig.add_hline(y=0.8, line_dash="dash", row=2, col=1,
+                            annotation_text="Overbought (0.8)",
+                            annotation_position="bottom right",
+                            line_color="rgba(200, 200, 200, 0.5)")
+                fig.add_hline(y=0.2, line_dash="dash", row=2, col=1,
+                            annotation_text="Oversold (0.2)",
+                            annotation_position="bottom right",
+                            line_color="rgba(200, 200, 200, 0.5)")
 
-            # Original volume bar code (commented out or removed)
-            """fig.add_trace(go.Bar(
-                x=data_red.date,
-                y=data_red.volume,
-                name="Volume",
-                marker_color='#5C6BC0',  # Blue for volume bars
-            ), row=2, col=1)"""
+            elif row2_type == 'macd':
+                # MACD with dynamic state-based coloring using precomputed convergence booleans
+                # States:
+                # - bullc: data_red[f"bullish_convergence_{strategy.primary_timeframe}"] == True
+                # - bearc: data_red[f"bearish_convergence_{strategy.primary_timeframe}"] == True
+                # - neutral: neither bullc nor bearc
+                primary_macd_col = f"MACD_12_26_9_{strategy.primary_timeframe}"
+                bullc_col = f"bullish_convergence_{strategy.primary_timeframe}"
+                bearc_col = f"bearish_convergence_{strategy.primary_timeframe}"
+                if primary_macd_col in data_red.columns:
+                    macd = pd.to_numeric(data_red[primary_macd_col], errors='coerce')
+
+                    # Use provided boolean columns; handle absence gracefully
+                    has_bull = bullc_col in data_red.columns
+                    has_bear = bearc_col in data_red.columns
+                    is_bullc = data_red[bullc_col].fillna(False) if has_bull else pd.Series(False, index=data_red.index)
+                    is_bearc = data_red[bearc_col].fillna(False) if has_bear else pd.Series(False, index=data_red.index)
+
+                    # Neutral where neither is true; also treat NaN macd as neutral to avoid artifacts
+                    is_neutral = (~is_bullc) & (~is_bearc) | macd.isna()
+
+                    # Build masked series; NaNs break lines between segments without gaps along transitions
+                    macd_bull = macd.where(is_bullc)
+                    macd_bear = macd.where(is_bearc)
+                    macd_neut = macd.where(is_neutral)
+
+                    # Legend grouping so the three traces describe one continuous MACD line
+                    lg = "primary-macd-state"
+
+                    # Accessible, high-contrast colors on dark background
+                    color_bull = "#00E5FF"   # cyan (bullish convergence)
+                    color_bear = "#FFB000"   # orange (Okabe-Ito) (bearish convergence)
+                    color_neut = "#B3B3B3"   # light gray (neutral)
+
+                    # Bullish convergence segment
+                    fig.add_trace(go.Scatter(
+                        x=data_red.date,
+                        y=macd_bull,
+                        name="MACD — Bullish convergence",
+                        mode="lines",
+                        line=dict(color=color_bull, width=1.5),
+                        connectgaps=False,
+                        legendgroup=lg,
+                        showlegend=True
+                    ), row=2, col=1)
+
+                    # Bearish convergence segment
+                    fig.add_trace(go.Scatter(
+                        x=data_red.date,
+                        y=macd_bear,
+                        name="MACD — Bearish convergence",
+                        mode="lines",
+                        line=dict(color=color_bear, width=1.5),
+                        connectgaps=False,
+                        legendgroup=lg,
+                        showlegend=True
+                    ), row=2, col=1)
+
+                    # Neutral segment
+                    fig.add_trace(go.Scatter(
+                        x=data_red.date,
+                        y=macd_neut,
+                        name="MACD — Neutral",
+                        mode="lines",
+                        line=dict(color=color_neut, width=1.5, dash="dot"),
+                        connectgaps=False,
+                        legendgroup=lg,
+                        showlegend=True
+                    ), row=2, col=1)
+
+                # Zero line for MACD
+                fig.add_hline(y=0, line_dash="dash", row=2, col=1,
+                              annotation_text="Zero Line",
+                              annotation_position="bottom right",
+                              line_color="rgba(200, 200, 200, 0.3)")
 
             # Add Choppiness Index for primary timeframe
             primary_chop_col = f'chop_{primary_timeframe}'
@@ -529,11 +600,19 @@ if do_generate_charts:
                 ), row=1, col=1)
 
             # Update layout for a dark theme
+            # Set y-axis title based on row2_type
+            if row2_type == 'lrsi':
+                yaxis2_title = "Laguerre RSI"
+            elif row2_type == 'macd':
+                yaxis2_title = "MACD"
+            else:
+                yaxis2_title = "Indicators"
+
             fig.update_layout(
                 template='plotly_dark',
                 title=f"Price Chart for {pair}",
                 yaxis_title="Price (USD)",
-                yaxis2_title="Laguerre RSI",
+                yaxis2_title=yaxis2_title,
                 yaxis3_title="Choppiness Index",
                 showlegend=False,
                 # Explicitly control the x-axis range slider
@@ -621,3 +700,5 @@ if not all_trades.empty:
     print(all_trades.groupby("pair")["exit_reason"].value_counts())
 else:
     print("No trades to group by.")
+
+#
