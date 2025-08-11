@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from freqtrade.data.history import load_pair_history
 from freqtrade.enums import CandleType
 from freqtrade.exchange.binance import Binance
 from freqtrade.resolvers import StrategyResolver
-
+import argparse
 
 # Change directory
 # Modify this cell to insure that the output shows the correct path.
@@ -40,15 +41,25 @@ print(Path.cwd())
 # config = Configuration.from_files([])
 config = Configuration.from_files(["user_data/config-backtest.json"])
 
+# Parse command line arguments
+parser = argparse.ArgumentParser(description="Backtesting analysis script")
+parser.add_argument(
+    "--start",
+    type=str,
+    default="2025-08-01",
+    help="Start date for the analysis period (YYYY-MM-DD format)",
+)
+args = parser.parse_args()
+
 # Location of the data
 data_location = config["datadir"]
 
-do_generate_charts = False
-row2_type = 'lrsi'  # macd or lrsi
+do_generate_charts = True
+row2_type = "lrsi"  # macd or lrsi
 
 # Date range configuration
 date_range_days = 0  # Duration of each date range (e.g., 2 = 2-day ranges like July 1-3, July 4-6)
-overall_start = "2025-08-01"
+overall_start = args.start
 overall_end = datetime.fromtimestamp(datetime.now().timestamp(), tz=UTC).strftime("%Y-%m-%d")
 date_ranges = []
 current_date = datetime.strptime(overall_start, "%Y-%m-%d")
@@ -58,12 +69,9 @@ while current_date < end_date_dt:
     next_date = current_date + timedelta(days=date_range_days)
     if next_date > end_date_dt:
         next_date = end_date_dt
-    date_ranges.append((
-        current_date.strftime("%Y-%m-%d"),
-        next_date.strftime("%Y-%m-%d")
-    ))
+    date_ranges.append((current_date.strftime("%Y-%m-%d"), next_date.strftime("%Y-%m-%d")))
     current_date = next_date + timedelta(days=1)  # Move to the day after next_date to avoid overlap
-base_currency = "USDT" # Assuming USDT as the common quote and stake currency
+base_currency = "USDT"  # Assuming USDT as the common quote and stake currency
 stake_currency = "USDT"
 
 whitelist = set(config["exchange"]["pair_whitelist"])
@@ -71,18 +79,7 @@ blacklist = set(config["exchange"]["pair_blacklist"])
 pairs = whitelist - blacklist
 pairs_symbols = [p.split("/")[0] if "/" in p else p for p in pairs]
 
-exchange = Binance(config) # Assuming Binance, adjust if necessary
-
-# Now load strategy using StrategyResolver (which properly handles the config)
-strategy = StrategyResolver.load_strategy(config)
-strategy.dp = DataProvider(config, exchange, None)
-strategy.ft_bot_start()
-
-# get timeframes
-timeframe = strategy.timeframe
-primary_timeframe = strategy.primary_timeframe
-major_timeframe = strategy.major_timeframe
-long_timeframe = strategy.long_timeframe
+exchange = Binance(config)  # Assuming Binance, adjust if necessary
 
 # if backtest_dir points to a directory, it'll automatically load the last backtest file.
 backtest_dir = config["user_data_dir"] / "backtest_results"
@@ -104,14 +101,21 @@ all_trades = load_backtest_data(backtest_dir)
 
 # Load strategy and exchange once
 # print(config['exchange'])
-strategy_name = config["strategy"] # Use the strategy name from config
+strategy_name = config["strategy"]  # Use the strategy name from config
 
-loaded_strategy = StrategyResolver.load_strategy(config)
-loaded_strategy.dp = DataProvider(config, exchange, None)
-loaded_strategy.ft_bot_start()
+# Now load strategy using StrategyResolver (which properly handles the config)
+strategy = StrategyResolver.load_strategy(config)
+strategy.dp = DataProvider(config, exchange, None)
+strategy.ft_bot_start()
+
+# get timeframes
+timeframe = strategy.timeframe
+primary_timeframe = strategy.primary_timeframe
+major_timeframe = strategy.major_timeframe
+long_timeframe = strategy.long_timeframe
 
 
-def plot_trades(fig, trades: pd.DataFrame) -> 'make_subplots':
+def plot_trades(fig, trades: pd.DataFrame) -> "make_subplots":
     """
     Add trades to "fig"
     """
@@ -175,9 +179,7 @@ def plot_trades(fig, trades: pd.DataFrame) -> 'make_subplots':
 
 if do_generate_charts:
     from datetime import datetime, timedelta
-
     from plotly.subplots import make_subplots
-
 
     for start_date, end_date in date_ranges:
         for pair_symbol in pairs_symbols:
@@ -199,23 +201,33 @@ if do_generate_charts:
                 print(f"Loaded {len(candles)} rows of data for {pair} from {data_location}")
 
                 # Generate signals
-                df = loaded_strategy.analyze_ticker(candles, {"pair": pair})
+                df = strategy.analyze_ticker(candles, {"pair": pair})
                 data = df.set_index("date", drop=False)
 
                 # Filter trades for current date range
-                end_date_plus = (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-                trades_red = all_trades[
-                    (all_trades["pair"] == pair) &
-                    (all_trades["open_date"] >= start_date) &
-                    (all_trades["open_date"] < end_date_plus)
-                ] if not all_trades.empty else pd.DataFrame()
+                end_date_plus = (
+                    datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+                ).strftime("%Y-%m-%d")
+                trades_red = (
+                    all_trades[
+                        (all_trades["pair"] == pair)
+                        & (all_trades["open_date"] >= start_date)
+                        & (all_trades["open_date"] < end_date_plus)
+                    ]
+                    if not all_trades.empty
+                    else pd.DataFrame()
+                )
 
                 data_red = data[start_date:end_date]
 
                 # Create chart
-                fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                                vertical_spacing=0.03,
-                                row_heights=[0.6, 0.2, 0.2])
+                fig = make_subplots(
+                    rows=3,
+                    cols=1,
+                    shared_xaxes=True,
+                    vertical_spacing=0.03,
+                    row_heights=[0.6, 0.2, 0.2],
+                )
 
                 # Add chart elements (candles, indicators, trades etc.)
                 # ... (preserve existing chart configuration code here) ...
@@ -225,27 +237,46 @@ if do_generate_charts:
                 fig.write_html(html_filename)
 
                 # Add navigation controls
-                with open(html_filename, 'r+') as f:
+                with open(html_filename, "r+") as f:
                     content = f.read()
-                    body_index = content.find('<body>') + 6
-                    nav_html = f'''
+                    body_index = content.find("<body>") + 6
+                    nav_html = f"""
                     <div style="padding: 10px; background: #1f1f1f; display: flex; justify-content: space-between; align-items: center;">
                         <div>
-                            {f'<a href="chart_{timeframe}_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
-                            if (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)) >= datetime.strptime(overall_start, "%Y-%m-%d")
-                            else '<span style="color: #666; padding: 5px 10px;">← Start</span>'}
-                            <span style="color: #888; margin: 0 15px;">{start_date} to {end_date}</span>
-                            {f'<a href="chart_{timeframe}_{pair_symbol}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
-                            if (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)) <= datetime.strptime(overall_end, "%Y-%m-%d")
-                            else '<span style="color: #666; padding: 5px 10px;">End →</span>'}
+                            {
+                        f'<a href="chart_{timeframe}_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days + 1)).strftime("%Y-%m-%d")}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
+                        if (
+                            datetime.strptime(start_date, "%Y-%m-%d")
+                            - timedelta(days=date_range_days + 1)
+                        )
+                        >= datetime.strptime(overall_start, "%Y-%m-%d")
+                        else '<span style="color: #666; padding: 5px 10px;">← Start</span>'
+                    }
+                            <span style="color: #888; margin: 0 15px;">{start_date} to {
+                        end_date
+                    }</span>
+                            {
+                        f'<a href="chart_{timeframe}_{pair_symbol}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days + 1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
+                        if (
+                            datetime.strptime(end_date, "%Y-%m-%d")
+                            + timedelta(days=date_range_days + 1)
+                        )
+                        <= datetime.strptime(overall_end, "%Y-%m-%d")
+                        else '<span style="color: #666; padding: 5px 10px;">End →</span>'
+                    }
                         </div>
                         <select onchange="window.location.href=this.value.replace('ASSET',this.options[this.selectedIndex].text)"
                                 style="padding: 5px; background: #333; color: white; border: 1px solid #666; border-radius: 4px;">
                             <option value="">Select Asset</option>
-                            {''.join(f'<option value="chart_{timeframe}_ASSET_{start_date}_{end_date}.html">{sym}</option>' for sym in pairs_symbols)}
+                            {
+                        "".join(
+                            f'<option value="chart_{timeframe}_ASSET_{start_date}_{end_date}.html">{sym}</option>'
+                            for sym in pairs_symbols
+                        )
+                    }
                         </select>
                     </div>
-                    '''
+                    """
                     modified_content = content[:body_index] + nav_html + content[body_index:]
                     f.seek(0)
                     f.write(modified_content)
@@ -270,18 +301,18 @@ if do_generate_charts:
                 print(f"No data found for {pair} from {data_location}. Skipping.")
                 continue
             print(f"Loaded {len(candles)} rows of data for {pair} from {data_location}")
-        # print(candles)
+            # print(candles)
 
             # Generate buy/sell signals using strategy
-            df = loaded_strategy.analyze_ticker(candles, {"pair": pair})
-        # print(df)
+            df = strategy.analyze_ticker(candles, {"pair": pair})
+            # print(df)
 
             print(f"Generated {df['enter_long'].sum()} long entry signals for {pair}")
             print(f"Generated {df['enter_short'].sum()} short entry signals for {pair}")
             data = df.set_index("date", drop=False)
-        # print(data)
+            # print(data)
 
-        # Limit graph period to keep plotly quick and reactive
+            # Limit graph period to keep plotly quick and reactive
 
             # a day after end date
             end_date_dt = datetime.strptime(end_date, "%Y-%m-%d")
@@ -291,26 +322,42 @@ if do_generate_charts:
             # Filter trades to the current pair and date range
             if not all_trades.empty:
                 trades_red = all_trades.loc[all_trades["pair"] == pair]
-                trades_red = trades_red[(trades_red["open_date"] >= start_date) & (trades_red["open_date"] < end_date_plus)]
+                trades_red = trades_red[
+                    (trades_red["open_date"] >= start_date)
+                    & (trades_red["open_date"] < end_date_plus)
+                ]
             else:
-                trades_red = pd.DataFrame() # Empty dataframe if no trades
+                trades_red = pd.DataFrame()  # Empty dataframe if no trades
 
             data_red = data[start_date:end_date]
 
             # Print filtered trades (trades_red) for the plot
             print(f"\nFiltered Trades for {pair} (trades_red for plot):")
             if not trades_red.empty:
-                print(trades_red[['open_date', 'pair', 'is_short', 'open_rate', 'close_rate', 'profit_abs',
-                                'profit_ratio', 'exit_reason', 'amount', 'leverage']])
-            # Print corresponding data points from data_red
+                print(
+                    trades_red[
+                        [
+                            "open_date",
+                            "pair",
+                            "is_short",
+                            "open_rate",
+                            "close_rate",
+                            "profit_abs",
+                            "profit_ratio",
+                            "exit_reason",
+                            "amount",
+                            "leverage",
+                        ]
+                    ]
+                )
+                # Print corresponding data points from data_red
                 print("\nCorresponding Data Points for Trades:")
             for index, trade in trades_red.iterrows():
-                trade_date = trade['open_date']
+                trade_date = trade["open_date"]
                 # Find the closest data point in data_red
-                closest_data_point = data_red.iloc[
-                    data_red.index.get_loc(trade_date)
-                ]
-                print(f"Trade Date: {trade_date}, "
+                closest_data_point = data_red.iloc[data_red.index.get_loc(trade_date)]
+                print(
+                    f"Trade Date: {trade_date}, "
                     f"Open: {closest_data_point['open']:.8f}, "
                     f"Close: {closest_data_point['close']:.8f}, "
                     f"High: {closest_data_point['high']:.8f}, "
@@ -319,17 +366,17 @@ if do_generate_charts:
                     f"Chop 15m: {closest_data_point.get('chop_15m', 'N/A'):.2f}, "
                     f"Chop 1h: {closest_data_point.get('chop_1h', 'N/A'):.2f}, "
                     f"Enter Long: {closest_data_point.get('enter_long', 'N/A')}, "
-                    f"Enter Short: {closest_data_point.get('enter_short', 'N/A')}")
-                close_date = trade['close_date']
+                    f"Enter Short: {closest_data_point.get('enter_short', 'N/A')}"
+                )
+                close_date = trade["close_date"]
                 # if close_date is not in data_red, print the trade
                 if close_date not in data_red.index:
                     print(f"Close Date: {trade['close_date']} not in data_red")
                     continue
                 # Find the closest data point in data_red
-                closest_data_point = data_red.iloc[
-                    data_red.index.get_loc(close_date)
-                ]
-                print(f"Close Date: {trade['close_date']}"
+                closest_data_point = data_red.iloc[data_red.index.get_loc(close_date)]
+                print(
+                    f"Close Date: {trade['close_date']}"
                     f"O: {closest_data_point['open']:.4f}, "
                     f"C: {closest_data_point['close']:.4f}, "
                     f"H: {closest_data_point['high']:.4f}, "
@@ -337,16 +384,20 @@ if do_generate_charts:
                     f"peak: {closest_data_point.get('peak_15m', 'N/A'):.4f}, "
                     f"trough: {closest_data_point.get('trough_15m', 'N/A'):.4f}, "
                     f"pll: {closest_data_point.get('lower_low_15m', 'N/A')}, "
-                    f"reason: {closest_data_point.get('exit_reason', '')} ")
+                    f"reason: {closest_data_point.get('exit_reason', '')} "
+                )
 
             else:
                 print(f"No trades found for {pair} in the specified date range for plotting.")
 
-
             # Create the candlestick chart
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                                vertical_spacing=0.03,
-                                row_heights=[0.6, 0.2, 0.2]) # Adjusted for 3 rows
+            fig = make_subplots(
+                rows=3,
+                cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.03,
+                row_heights=[0.6, 0.2, 0.2],
+            )  # Adjusted for 3 rows
 
             candles = go.Candlestick(
                 x=data_red.date,
@@ -355,123 +406,164 @@ if do_generate_charts:
                 low=data_red.low,
                 close=data_red.close,
                 name="Price",
-                increasing_line_color='#26A69A',    # Green for up candles
-                decreasing_line_color='#EF5350'     # Red for down candles
+                increasing_line_color="#26A69A",  # Green for up candles
+                decreasing_line_color="#EF5350",  # Red for down candles
             )
             fig.add_trace(candles, 1, 1)
 
             # Add Major Peak line
-            major_peak_col = f'peak_{major_timeframe}'
+            major_peak_col = f"peak_{major_timeframe}"
             if major_peak_col in data_red.columns:
-                fig.add_trace(go.Scatter(
-                    x=data_red.date,
-                    y=data_red[major_peak_col],
-                    name=f'Major Peak ({major_timeframe})',
-                    line=dict(color=px.colors.qualitative.Pastel[0], width=1)
-                ), row=1, col=1)
+                fig.add_trace(
+                    go.Scatter(
+                        x=data_red.date,
+                        y=data_red[major_peak_col],
+                        name=f"Major Peak ({major_timeframe})",
+                        line=dict(color=px.colors.qualitative.Pastel[0], width=1),
+                    ),
+                    row=1,
+                    col=1,
+                )
 
             # Add Major Trough line
-            major_trough_col = f'trough_{major_timeframe}'
+            major_trough_col = f"trough_{major_timeframe}"
             if major_trough_col in data_red.columns:
-                fig.add_trace(go.Scatter(
-                    x=data_red.date,
-                    y=data_red[major_trough_col],
-                    name=f'Major Trough ({major_timeframe})',
-                    line=dict(color=px.colors.qualitative.Pastel[1], width=1)
-                ), row=1, col=1)
+                fig.add_trace(
+                    go.Scatter(
+                        x=data_red.date,
+                        y=data_red[major_trough_col],
+                        name=f"Major Trough ({major_timeframe})",
+                        line=dict(color=px.colors.qualitative.Pastel[1], width=1),
+                    ),
+                    row=1,
+                    col=1,
+                )
 
-            # Initialize strategy to get timeframes
-            strategy = FractalStrategy(config=config)
-
-            # Define timeframes for easier reference
-            primary_timeframe = strategy.primary_timeframe
-            major_timeframe = strategy.major_timeframe
+            # Use the already initialized strategy to get timeframes
+            # (strategy was properly initialized earlier with dp attribute)
+            # primary_timeframe and major_timeframe are already defined above
             atr_stop_ratio = strategy.atr_stop_ratio.value
 
             # Add Primary Peak line (from primary timeframe)
-            primary_peak_col = f'peak_{primary_timeframe}'
+            primary_peak_col = f"peak_{primary_timeframe}"
             if primary_peak_col in data_red.columns:
-                fig.add_trace(go.Scatter(
-                    x=data_red.date,
-                    y=data_red[primary_peak_col],
-                    name=f'Primary Peak ({primary_timeframe})',
-                    line=dict(color=px.colors.qualitative.Pastel[2], width=1)
-                ), row=1, col=1)
+                fig.add_trace(
+                    go.Scatter(
+                        x=data_red.date,
+                        y=data_red[primary_peak_col],
+                        name=f"Primary Peak ({primary_timeframe})",
+                        line=dict(color=px.colors.qualitative.Pastel[2], width=1),
+                    ),
+                    row=1,
+                    col=1,
+                )
 
             # Add Primary Trough line (from primary timeframe)
-            primary_trough_col = f'trough_{primary_timeframe}'
+            primary_trough_col = f"trough_{primary_timeframe}"
             if primary_trough_col in data_red.columns:
-                fig.add_trace(go.Scatter(
-                    x=data_red.date,
-                    y=data_red[primary_trough_col],
-                    name=f'Primary Trough ({primary_timeframe})',
-                    line=dict(color=px.colors.qualitative.Pastel[3], width=1)
-                ), row=1, col=1)
+                fig.add_trace(
+                    go.Scatter(
+                        x=data_red.date,
+                        y=data_red[primary_trough_col],
+                        name=f"Primary Trough ({primary_timeframe})",
+                        line=dict(color=px.colors.qualitative.Pastel[3], width=1),
+                    ),
+                    row=1,
+                    col=1,
+                )
 
             # Add markers for higher_high at major timeframe peaks
             # Only at the start of each hour for hourly timeframes
-            major_peak_col = f'peak_{major_timeframe}'
-            major_ha_upswing = f'ha_upswing_{major_timeframe}'
-            major_ha_downswing = f'ha_downswing_{major_timeframe}'
+            major_peak_col = f"peak_{major_timeframe}"
+            major_ha_upswing = f"ha_upswing_{major_timeframe}"
+            major_ha_downswing = f"ha_downswing_{major_timeframe}"
 
-            if (major_ha_upswing in data_red.columns and
-                'atr' in data_red.columns and
-                not data_red.empty):
+            if (
+                major_ha_upswing in data_red.columns
+                and "atr" in data_red.columns
+                and not data_red.empty
+            ):
                 # Filter data to the first entry of each hour where the heikin ashi is up
-                hh_data = data_red[data_red[major_ha_upswing] &
-                        (data_red.index.minute == 0)]
+                hh_data = data_red[data_red[major_ha_upswing] & (data_red.index.minute == 0)]
                 if not hh_data.empty:
-                    fig.add_trace(go.Scatter(
-                        x=hh_data.date,
-                        y=hh_data['close'] - (atr_stop_ratio * hh_data['atr']),
-                        mode='markers',
-                        name=f'Up Swing ({major_timeframe})',
-                        marker=dict(symbol='triangle-up', color=px.colors.qualitative.Pastel[4]),
-                        hoverinfo='skip'
-                    ), row=1, col=1)
+                    fig.add_trace(
+                        go.Scatter(
+                            x=hh_data.date,
+                            y=hh_data["close"] - (atr_stop_ratio * hh_data["atr"]),
+                            mode="markers",
+                            name=f"Up Swing ({major_timeframe})",
+                            marker=dict(
+                                symbol="triangle-up", color=px.colors.qualitative.Pastel[4]
+                            ),
+                            hoverinfo="skip",
+                        ),
+                        row=1,
+                        col=1,
+                    )
 
             # Add markers for lower_low at major timeframe troughs
             # Add markers for lower_low at major timeframe troughs, only at the start of each hour
-            major_trough_col = f'trough_{major_timeframe}'
+            major_trough_col = f"trough_{major_timeframe}"
 
-            if (major_ha_downswing in data_red.columns and
-                'atr' in data_red.columns and
-                not data_red.empty):
+            if (
+                major_ha_downswing in data_red.columns
+                and "atr" in data_red.columns
+                and not data_red.empty
+            ):
                 # Filter data to the first entry of each hour where the heikin ashi is down
-                ll_data = data_red[data_red[major_ha_downswing] &
-                        (data_red.index.minute == 0)]
+                ll_data = data_red[data_red[major_ha_downswing] & (data_red.index.minute == 0)]
                 if not ll_data.empty:
-                    fig.add_trace(go.Scatter(
-                        x=ll_data.date,
-                        y=ll_data['close'] + (atr_stop_ratio * ll_data['atr']),
-                        mode='markers',
-                        name=f'Down Swing ({major_timeframe})',
-                        marker=dict(symbol='triangle-down', color=px.colors.qualitative.Pastel[5]),
-                        hoverinfo='skip'
-                    ), row=1, col=1)
+                    fig.add_trace(
+                        go.Scatter(
+                            x=ll_data.date,
+                            y=ll_data["close"] + (atr_stop_ratio * ll_data["atr"]),
+                            mode="markers",
+                            name=f"Down Swing ({major_timeframe})",
+                            marker=dict(
+                                symbol="triangle-down", color=px.colors.qualitative.Pastel[5]
+                            ),
+                            hoverinfo="skip",
+                        ),
+                        row=1,
+                        col=1,
+                    )
 
             # Conditional rendering based on row2_type switch
-            if row2_type == 'lrsi':
+            if row2_type == "lrsi":
                 # Add Laguerre RSI line
-                if 'laguerre' in data_red.columns:
-                    fig.add_trace(go.Scatter(
-                        x=data_red.date,
-                        y=data_red['laguerre'],
-                        name='Laguerre RSI',
-                        line=dict(color='yellow', width=1)
-                    ), row=2, col=1)
+                if "laguerre" in data_red.columns:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=data_red.date,
+                            y=data_red["laguerre"],
+                            name="Laguerre RSI",
+                            line=dict(color="yellow", width=1),
+                        ),
+                        row=2,
+                        col=1,
+                    )
 
                 # Add horizontal lines at 0.2 and 0.8 for Laguerre RSI
-                fig.add_hline(y=0.8, line_dash="dash", row=2, col=1,
-                            annotation_text="Overbought (0.8)",
-                            annotation_position="bottom right",
-                            line_color="rgba(200, 200, 200, 0.5)")
-                fig.add_hline(y=0.2, line_dash="dash", row=2, col=1,
-                            annotation_text="Oversold (0.2)",
-                            annotation_position="bottom right",
-                            line_color="rgba(200, 200, 200, 0.5)")
+                fig.add_hline(
+                    y=0.8,
+                    line_dash="dash",
+                    row=2,
+                    col=1,
+                    annotation_text="Overbought (0.8)",
+                    annotation_position="bottom right",
+                    line_color="rgba(200, 200, 200, 0.5)",
+                )
+                fig.add_hline(
+                    y=0.2,
+                    line_dash="dash",
+                    row=2,
+                    col=1,
+                    annotation_text="Oversold (0.2)",
+                    annotation_position="bottom right",
+                    line_color="rgba(200, 200, 200, 0.5)",
+                )
 
-            elif row2_type == 'macd':
+            elif row2_type == "macd":
                 # MACD with dynamic state-based coloring using precomputed convergence booleans
                 # States:
                 # - bullc: data_red[f"bullish_convergence_{strategy.primary_timeframe}"] == True
@@ -481,13 +573,21 @@ if do_generate_charts:
                 bullc_col = f"bullish_convergence_{strategy.primary_timeframe}"
                 bearc_col = f"bearish_convergence_{strategy.primary_timeframe}"
                 if primary_macd_col in data_red.columns:
-                    macd = pd.to_numeric(data_red[primary_macd_col], errors='coerce')
+                    macd = pd.to_numeric(data_red[primary_macd_col], errors="coerce")
 
                     # Use provided boolean columns; handle absence gracefully
                     has_bull = bullc_col in data_red.columns
                     has_bear = bearc_col in data_red.columns
-                    is_bullc = data_red[bullc_col].fillna(False) if has_bull else pd.Series(False, index=data_red.index)
-                    is_bearc = data_red[bearc_col].fillna(False) if has_bear else pd.Series(False, index=data_red.index)
+                    is_bullc = (
+                        data_red[bullc_col].fillna(False)
+                        if has_bull
+                        else pd.Series(False, index=data_red.index)
+                    )
+                    is_bearc = (
+                        data_red[bearc_col].fillna(False)
+                        if has_bear
+                        else pd.Series(False, index=data_red.index)
+                    )
 
                     # Neutral where neither is true; also treat NaN macd as neutral to avoid artifacts
                     is_neutral = (~is_bullc) & (~is_bearc) | macd.isna()
@@ -501,115 +601,157 @@ if do_generate_charts:
                     lg = "primary-macd-state"
 
                     # Accessible, high-contrast colors on dark background
-                    color_bull = "#00E5FF"   # cyan (bullish convergence)
-                    color_bear = "#FFB000"   # orange (Okabe-Ito) (bearish convergence)
-                    color_neut = "#B3B3B3"   # light gray (neutral)
+                    color_bull = "#00E5FF"  # cyan (bullish convergence)
+                    color_bear = "#FFB000"  # orange (Okabe-Ito) (bearish convergence)
+                    color_neut = "#B3B3B3"  # light gray (neutral)
 
                     # Bullish convergence segment
-                    fig.add_trace(go.Scatter(
-                        x=data_red.date,
-                        y=macd_bull,
-                        name="MACD — Bullish convergence",
-                        mode="lines",
-                        line=dict(color=color_bull, width=1.5),
-                        connectgaps=False,
-                        legendgroup=lg,
-                        showlegend=True
-                    ), row=2, col=1)
+                    fig.add_trace(
+                        go.Scatter(
+                            x=data_red.date,
+                            y=macd_bull,
+                            name="MACD — Bullish convergence",
+                            mode="lines",
+                            line=dict(color=color_bull, width=1.5),
+                            connectgaps=False,
+                            legendgroup=lg,
+                            showlegend=True,
+                        ),
+                        row=2,
+                        col=1,
+                    )
 
                     # Bearish convergence segment
-                    fig.add_trace(go.Scatter(
-                        x=data_red.date,
-                        y=macd_bear,
-                        name="MACD — Bearish convergence",
-                        mode="lines",
-                        line=dict(color=color_bear, width=1.5),
-                        connectgaps=False,
-                        legendgroup=lg,
-                        showlegend=True
-                    ), row=2, col=1)
+                    fig.add_trace(
+                        go.Scatter(
+                            x=data_red.date,
+                            y=macd_bear,
+                            name="MACD — Bearish convergence",
+                            mode="lines",
+                            line=dict(color=color_bear, width=1.5),
+                            connectgaps=False,
+                            legendgroup=lg,
+                            showlegend=True,
+                        ),
+                        row=2,
+                        col=1,
+                    )
 
                     # Neutral segment
-                    fig.add_trace(go.Scatter(
-                        x=data_red.date,
-                        y=macd_neut,
-                        name="MACD — Neutral",
-                        mode="lines",
-                        line=dict(color=color_neut, width=1.5, dash="dot"),
-                        connectgaps=False,
-                        legendgroup=lg,
-                        showlegend=True
-                    ), row=2, col=1)
+                    fig.add_trace(
+                        go.Scatter(
+                            x=data_red.date,
+                            y=macd_neut,
+                            name="MACD — Neutral",
+                            mode="lines",
+                            line=dict(color=color_neut, width=1.5, dash="dot"),
+                            connectgaps=False,
+                            legendgroup=lg,
+                            showlegend=True,
+                        ),
+                        row=2,
+                        col=1,
+                    )
 
                 # Zero line for MACD
-                fig.add_hline(y=0, line_dash="dash", row=2, col=1,
-                              annotation_text="Zero Line",
-                              annotation_position="bottom right",
-                              line_color="rgba(200, 200, 200, 0.3)")
+                fig.add_hline(
+                    y=0,
+                    line_dash="dash",
+                    row=2,
+                    col=1,
+                    annotation_text="Zero Line",
+                    annotation_position="bottom right",
+                    line_color="rgba(200, 200, 200, 0.3)",
+                )
 
             # Add Choppiness Index for primary timeframe
-            primary_chop_col = f'chop_{primary_timeframe}'
+            primary_chop_col = f"chop_{primary_timeframe}"
             if primary_chop_col in data_red.columns:
-                fig.add_trace(go.Scatter(
-                    x=data_red.date,
-                    y=data_red[primary_chop_col],
-                    name=f'Chop ({primary_timeframe})',
-                    line=dict(color='orange', width=1)
-                ), row=3, col=1)
+                fig.add_trace(
+                    go.Scatter(
+                        x=data_red.date,
+                        y=data_red[primary_chop_col],
+                        name=f"Chop ({primary_timeframe})",
+                        line=dict(color="orange", width=1),
+                    ),
+                    row=3,
+                    col=1,
+                )
 
             # Add Choppiness Index for major timeframe
-            major_chop_col = f'chop_{major_timeframe}'
+            major_chop_col = f"chop_{major_timeframe}"
             if major_chop_col in data_red.columns:
-                fig.add_trace(go.Scatter(
-                    x=data_red.date,
-                    y=data_red[major_chop_col],
-                    name=f'Chop ({major_timeframe})',
-                    line=dict(color='yellow', width=1)
-                ), row=3, col=1)
+                fig.add_trace(
+                    go.Scatter(
+                        x=data_red.date,
+                        y=data_red[major_chop_col],
+                        name=f"Chop ({major_timeframe})",
+                        line=dict(color="yellow", width=1),
+                    ),
+                    row=3,
+                    col=1,
+                )
 
             # Add Choppiness Index for long timeframe
-            long_chop_col = f'chop_{long_timeframe}'
+            long_chop_col = f"chop_{long_timeframe}"
             if long_chop_col in data_red.columns:
-                fig.add_trace(go.Scatter(
-                    x=data_red.date,
-                    y=data_red[long_chop_col],
-                    name=f'Chop ({long_timeframe})',
-                    line=dict(color='lightblue', width=1)
-                ), row=3, col=1)
+                fig.add_trace(
+                    go.Scatter(
+                        x=data_red.date,
+                        y=data_red[long_chop_col],
+                        name=f"Chop ({long_timeframe})",
+                        line=dict(color="lightblue", width=1),
+                    ),
+                    row=3,
+                    col=1,
+                )
 
-            fig.add_hline(y=strategy.primary_chop_threshold.value, line_dash="dash", row=3, col=1,
-                        annotation_text="Minimal Threshold",
-                        annotation_position="bottom right",
-                        line_color="rgba(200, 200, 200, 0.5)")
+            fig.add_hline(
+                y=strategy.primary_chop_threshold.value,
+                line_dash="dash",
+                row=3,
+                col=1,
+                annotation_text="Minimal Threshold",
+                annotation_position="bottom right",
+                line_color="rgba(200, 200, 200, 0.5)",
+            )
 
             # Add EMA10 and EMA20 lines
-            if 'ema10' in data_red.columns:
-                fig.add_trace(go.Scatter(
-                    x=data_red.date,
-                    y=data_red['ema10'],
-                    name='EMA 10',
-                    line=dict(color='cyan', width=1)
-                ), row=1, col=1)
+            if "ema10" in data_red.columns:
+                fig.add_trace(
+                    go.Scatter(
+                        x=data_red.date,
+                        y=data_red["ema10"],
+                        name="EMA 10",
+                        line=dict(color="cyan", width=1),
+                    ),
+                    row=1,
+                    col=1,
+                )
 
-            if 'ema20' in data_red.columns:
-                fig.add_trace(go.Scatter(
-                    x=data_red.date,
-                    y=data_red['ema20'],
-                    name='EMA 20',
-                    line=dict(color='magenta', width=1)
-                ), row=1, col=1)
+            if "ema20" in data_red.columns:
+                fig.add_trace(
+                    go.Scatter(
+                        x=data_red.date,
+                        y=data_red["ema20"],
+                        name="EMA 20",
+                        line=dict(color="magenta", width=1),
+                    ),
+                    row=1,
+                    col=1,
+                )
 
             # Update layout for a dark theme
             # Set y-axis title based on row2_type
-            if row2_type == 'lrsi':
+            if row2_type == "lrsi":
                 yaxis2_title = "Laguerre RSI"
-            elif row2_type == 'macd':
+            elif row2_type == "macd":
                 yaxis2_title = "MACD"
             else:
                 yaxis2_title = "Indicators"
 
             fig.update_layout(
-                template='plotly_dark',
+                template="plotly_dark",
                 title=f"Price Chart for {pair}",
                 yaxis_title="Price (USD)",
                 yaxis2_title=yaxis2_title,
@@ -618,43 +760,60 @@ if do_generate_charts:
                 # Explicitly control the x-axis range slider
                 # Set to True to ensure it's visible (default for candlestick)
                 # Set to False to hide it
-                xaxis_rangeslider_visible=False
+                xaxis_rangeslider_visible=False,
             )
 
             plot_trades(fig, trades_red)
 
             # Customize grid
-            fig.update_xaxes(gridcolor='#1f1f1f', zerolinecolor='#1f1f1f')
-            fig.update_yaxes(gridcolor='#1f1f1f', zerolinecolor='#1f1f1f')
+            fig.update_xaxes(gridcolor="#1f1f1f", zerolinecolor="#1f1f1f")
+            fig.update_yaxes(gridcolor="#1f1f1f", zerolinecolor="#1f1f1f")
 
-                # Save the interactive HTML chart
+            # Save the interactive HTML chart
             html_filename = f"{project_root}/user_data/charts/chart_{timeframe}_{pair_symbol}_{start_date}_{end_date}.html"
             png_filename = f"{project_root}/user_data/charts/chart_{timeframe}_{pair_symbol}.png"
 
             fig.write_html(html_filename)
 
-                # Add navigation and asset selector
-            with open(html_filename, 'r+') as f:
+            # Add navigation and asset selector
+            with open(html_filename, "r+") as f:
                 content = f.read()
-                body_index = content.find('<body>') + 6
-                nav_html = f'''
+                body_index = content.find("<body>") + 6
+                nav_html = f"""
                 <div style="padding: 10px; background: #1f1f1f; display: flex; justify-content: space-between; align-items: center;">
                     <div>
-                        {f'<a href="chart_{timeframe}_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
-                        if (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days+1)) >= datetime.strptime(overall_start, "%Y-%m-%d")
-                        else '<span style="color: #666; padding: 5px 10px;">← Start</span>'}
+                        {
+                    f'<a href="chart_{timeframe}_{pair_symbol}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=date_range_days + 1)).strftime("%Y-%m-%d")}_{(datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">← Previous</a>'
+                    if (
+                        datetime.strptime(start_date, "%Y-%m-%d")
+                        - timedelta(days=date_range_days + 1)
+                    )
+                    >= datetime.strptime(overall_start, "%Y-%m-%d")
+                    else '<span style="color: #666; padding: 5px 10px;">← Start</span>'
+                }
                         <span style="color: #888; margin: 0 15px;">{start_date} to {end_date}</span>
-                        {f'<a href="chart_{timeframe}_{pair_symbol}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
-                        if (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days+1)) <= datetime.strptime(overall_end, "%Y-%m-%d")
-                        else '<span style="color: #666; padding: 5px 10px;">End →</span>'}
+                        {
+                    f'<a href="chart_{timeframe}_{pair_symbol}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")}_{(datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=date_range_days + 1)).strftime("%Y-%m-%d")}.html" style="color: white; text-decoration: none; padding: 5px 10px; border: 1px solid #666; border-radius: 4px;">Next →</a>'
+                    if (
+                        datetime.strptime(end_date, "%Y-%m-%d")
+                        + timedelta(days=date_range_days + 1)
+                    )
+                    <= datetime.strptime(overall_end, "%Y-%m-%d")
+                    else '<span style="color: #666; padding: 5px 10px;">End →</span>'
+                }
                     </div>
                     <select onchange="window.location.href=this.value.replace('ASSET',this.options[this.selectedIndex].text)"
                             style="padding: 5px; background: #333; color: white; border: 1px solid #666; border-radius: 4px;">
                         <option value="">Select Asset</option>
-                        {''.join(f'<option value="chart_{timeframe}_ASSET_{start_date}_{end_date}.html">{sym}</option>' for sym in pairs_symbols)}
+                        {
+                    "".join(
+                        f'<option value="chart_{timeframe}_ASSET_{start_date}_{end_date}.html">{sym}</option>'
+                        for sym in pairs_symbols
+                    )
+                }
                     </select>
                 </div>
-                '''
+                """
                 modified_content = content[:body_index] + nav_html + content[body_index:]
                 f.seek(0)
                 f.write(modified_content)
@@ -669,7 +828,7 @@ if do_generate_charts:
 # All statistics are available per strategy, so if `--strategy-list` was used during backtest,
 # this will be reflected here as well.
 # Example usages:
-print(stats["strategy"][strategy_name]["results_per_pair"])
+print(json.dumps(stats["strategy"][strategy_name]["results_per_pair"], indent=2))
 # Get pairlist used for this backtest
 print(stats["strategy"][strategy_name]["pairlist"])
 # Get market change (average change of all pairs from start to end of the backtest period)
@@ -681,15 +840,23 @@ print(stats["strategy"][strategy_name]["drawdown_start"])
 print(stats["strategy"][strategy_name]["drawdown_end"])
 
 
-# Get strategy comparison (only relevant if multiple strategies were compared)
-print(stats["strategy_comparison"])
+# Print strategy comparison (only relevant if multiple strategies were compared)
+if "strategy_comparison" in stats:
+    print("\nStrategy Comparison:")
+    print(json.dumps(stats["strategy_comparison"], indent=4))
+else:
+    print("No strategy comparison data available.")
 
 # Print all trades with date, pair, and profit details
 print("\nAll Trades (from backtest results, open_date >= overall_start):")
 if not all_trades.empty:
     filtered_trades = all_trades[all_trades["open_date"] >= overall_start]
     if not filtered_trades.empty:
-        print(filtered_trades[['open_date', 'pair', 'profit_ratio', 'profit_abs', 'exit_reason', 'trade_duration']])
+        print(
+            filtered_trades[
+                ["open_date", "pair", "profit_ratio", "profit_abs", "exit_reason", "trade_duration"]
+            ]
+        )
     else:
         print("No trades found with open_date >= overall_start.")
 else:
@@ -700,5 +867,3 @@ if not all_trades.empty:
     print(all_trades.groupby("pair")["exit_reason"].value_counts())
 else:
     print("No trades to group by.")
-
-#

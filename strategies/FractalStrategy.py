@@ -140,9 +140,7 @@ class FractalStrategy(IStrategy):
     )
 
     # Parameters for tuning
-    volume_threshold = DecimalParameter(
-        1.0, 4.0, default=2, decimals=1, space="buy", optimize=True
-    )
+    volume_threshold = DecimalParameter(1.0, 4.0, default=2, decimals=1, space="buy", optimize=True)
 
     # Laguerre RSI parameters
     laguerre_gamma = DecimalParameter(
@@ -159,12 +157,8 @@ class FractalStrategy(IStrategy):
     )  # For short entry, cross below this
 
     # Choppiness Index parameters
-    primary_chop_threshold = IntParameter(
-        35, 60, default=45, space="buy", load=True, optimize=True
-    )
-    major_chop_threshold = IntParameter(
-        35, 50, default=40, space="buy", load=False, optimize=False
-    )
+    primary_chop_threshold = IntParameter(35, 60, default=45, space="buy", load=True, optimize=True)
+    major_chop_threshold = IntParameter(35, 50, default=40, space="buy", load=False, optimize=False)
 
     rr_ratio = DecimalParameter(
         1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=True
@@ -199,9 +193,7 @@ class FractalStrategy(IStrategy):
             # Get values from config, with defaults if not set
             ratio = self.config.get("tradable_balance_ratio", 1.0)
             wallet = self.config.get("dry_run_wallet", 1000)
-            logger.debug(
-                f"get_total_equity: Using config values. Ratio: {ratio}, Wallet: {wallet}"
-            )
+            logger.debug(f"get_total_equity: Using config values. Ratio: {ratio}, Wallet: {wallet}")
             return ratio * wallet
         else:
             logger.debug(
@@ -231,7 +223,6 @@ class FractalStrategy(IStrategy):
 
         return informative_pairs
 
-
     def _populate_pivots(self, df: DataFrame, window: int) -> DataFrame:
         """
         Finds peaks and troughs for price and MACD using scipy.signal.find_peaks
@@ -239,7 +230,9 @@ class FractalStrategy(IStrategy):
         """
         # Price peaks and troughs
         # Compute scalar prominence threshold from ATR rolling mean (median to avoid NaN/edge effects)
-        price_prom_series = df["atr"].rolling(20, min_periods=1).mean() * self.peak_prominence_atr_factor.value
+        price_prom_series = (
+            df["atr"].rolling(20, min_periods=1).mean() * self.peak_prominence_atr_factor.value
+        )
         price_prom_val = float(np.nanmedian(price_prom_series.values))
         if not np.isfinite(price_prom_val):
             price_prom_val = 0.0
@@ -301,8 +294,12 @@ class FractalStrategy(IStrategy):
         # Identify increasing/decreasing MACD peaks and troughs
         df["macd_peak_increasing"] = df["macd_peak_value"] > df["macd_peak_value"].shift(window)
         df["macd_peak_decreasing"] = df["macd_peak_value"] < df["macd_peak_value"].shift(window)
-        df["macd_trough_increasing"] = df["macd_trough_value"] > df["macd_trough_value"].shift(window)
-        df["macd_trough_decreasing"] = df["macd_trough_value"] < df["macd_trough_value"].shift(window)
+        df["macd_trough_increasing"] = df["macd_trough_value"] > df["macd_trough_value"].shift(
+            window
+        )
+        df["macd_trough_decreasing"] = df["macd_trough_value"] < df["macd_trough_value"].shift(
+            window
+        )
 
         df["bullish_convergence"] = df["peak_increasing"] & df["macd_peak_increasing"]
         df["bearish_convergence"] = df["trough_decreasing"] & df["macd_trough_decreasing"]
@@ -312,9 +309,7 @@ class FractalStrategy(IStrategy):
         return df
 
     @informative(primary_timeframe)
-    def populate_informative_primary(
-        self, dataframe: DataFrame, metadata: dict
-    ) -> DataFrame:
+    def populate_informative_primary(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
         Populate indicators for primary trend identification on primary_timeframe timeframe
         """
@@ -348,27 +343,17 @@ class FractalStrategy(IStrategy):
         # Initialize temporary columns for trend direction
         # 0: flat, 1: rising, -1: falling
         dataframe["peak_trend_temp"] = 0
-        dataframe.loc[
-            dataframe["high"] > dataframe["peak"].shift(1) * 1.001, "peak_trend_temp"
-        ] = 1
-        dataframe.loc[
-            dataframe["peak"] > dataframe["peak"].shift(1) * 1.001, "peak_trend_temp"
-        ] = 1
+        dataframe.loc[dataframe["high"] > dataframe["peak"].shift(1) * 1.001, "peak_trend_temp"] = 1
+        dataframe.loc[dataframe["peak"] > dataframe["peak"].shift(1) * 1.001, "peak_trend_temp"] = 1
         dataframe.loc[
             dataframe["peak"] < dataframe["peak"].shift(1) * 0.999, "peak_trend_temp"
         ] = -1
         # Replace 0s (flat periods) with NA, then forward-fill the last known trend
-        dataframe["peak_trend_temp"] = (
-            dataframe["peak_trend_temp"].replace(0, pd.NA).ffill()
-        )
+        dataframe["peak_trend_temp"] = dataframe["peak_trend_temp"].replace(0, pd.NA).ffill()
         # higher_high is True if the prevailing trend of donchian_upper is upwards (1)
-        dataframe["higher_high"] = (
-            (dataframe["peak_trend_temp"] == 1).fillna(False).astype(bool)
-        )
+        dataframe["higher_high"] = (dataframe["peak_trend_temp"] == 1).fillna(False).astype(bool)
         # lower_high is True if the prevailing trend of donchian_upper is downwards (-1)
-        dataframe["lower_high"] = (
-            (dataframe["peak_trend_temp"] == -1).fillna(False).astype(bool)
-        )
+        dataframe["lower_high"] = (dataframe["peak_trend_temp"] == -1).fillna(False).astype(bool)
 
         dataframe["trough_trend_temp"] = 0
         dataframe.loc[
@@ -384,28 +369,24 @@ class FractalStrategy(IStrategy):
         ] = -1
         # 0: flat, 1: rising, -1: falling
         # Replace 0s (flat periods) with NA, then forward-fill the last known trend
-        dataframe["trough_trend_temp"] = (
-            dataframe["trough_trend_temp"].replace(0, pd.NA).ffill()
-        )
+        dataframe["trough_trend_temp"] = dataframe["trough_trend_temp"].replace(0, pd.NA).ffill()
 
         # higher_low is True if the prevailing trend of donchian_lower is upwards (1)
-        dataframe["higher_low"] = (
-            (dataframe["trough_trend_temp"] == 1).fillna(False).astype(bool)
-        )
+        dataframe["higher_low"] = (dataframe["trough_trend_temp"] == 1).fillna(False).astype(bool)
         # lower_low is True if the prevailing trend of donchian_lower is downwards (-1)
-        dataframe["lower_low"] = (
-            (dataframe["trough_trend_temp"] == -1).fillna(False).astype(bool)
-        )
+        dataframe["lower_low"] = (dataframe["trough_trend_temp"] == -1).fillna(False).astype(bool)
 
         # Note: You might want to drop the temporary columns if they are not used elsewhere:
         dataframe.drop(["peak_trend_temp", "trough_trend_temp"], axis=1, inplace=True)
 
         # ATR
         dataframe["atr"] = ta.ATR(dataframe, timeperiod=14)
-        dataframe["long_atr_stop"] = (dataframe["close"]
-                                      - self.breakout_stop_ratio.value * dataframe["atr"])
-        dataframe["short_atr_stop"] = (dataframe["close"]
-                                       + self.breakout_stop_ratio.value * dataframe["atr"])
+        dataframe["long_atr_stop"] = (
+            dataframe["close"] - self.breakout_stop_ratio.value * dataframe["atr"]
+        )
+        dataframe["short_atr_stop"] = (
+            dataframe["close"] + self.breakout_stop_ratio.value * dataframe["atr"]
+        )
         # MACD
         dataframe.ta.macd(fast=12, slow=26, signal=9, append=True)
         dataframe = self._populate_pivots(dataframe, self.convergence_window.value)
@@ -417,9 +398,7 @@ class FractalStrategy(IStrategy):
         return dataframe
 
     @informative(major_timeframe)
-    def populate_informative_major(
-        self, dataframe: DataFrame, metadata: dict
-    ) -> DataFrame:
+    def populate_informative_major(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
         Populate indicators for major trend confirmation on major_timeframe timeframe
         """
@@ -430,13 +409,9 @@ class FractalStrategy(IStrategy):
         dataframe["ha_close"] = heikinashi["close"]
         dataframe["ha_high"] = heikinashi["high"]
         dataframe["ha_low"] = heikinashi["low"]
-        dataframe["ha_bullish"] = (heikinashi["close"] > heikinashi["open"]).astype(
-            bool
-        )
+        dataframe["ha_bullish"] = (heikinashi["close"] > heikinashi["open"]).astype(bool)
         dataframe["ha_upswing"] = dataframe["ha_bullish"].rolling(4).sum() >= 3
-        dataframe["ha_bearish"] = (heikinashi["close"] < heikinashi["open"]).astype(
-            bool
-        )
+        dataframe["ha_bearish"] = (heikinashi["close"] < heikinashi["open"]).astype(bool)
         dataframe["ha_downswing"] = dataframe["ha_bearish"].rolling(4).sum() >= 3
 
         # Donchian Channels (using 5-period window)
@@ -465,46 +440,26 @@ class FractalStrategy(IStrategy):
         # Initialize temporary columns for trend direction
         # 0: flat, 1: rising, -1: falling
         dataframe["peak_trend_temp"] = 0
-        dataframe.loc[
-            dataframe["high"] > dataframe["peak"].shift(1), "peak_trend_temp"
-        ] = 1
-        dataframe.loc[
-            dataframe["peak"] < dataframe["peak"].shift(1), "peak_trend_temp"
-        ] = -1
+        dataframe.loc[dataframe["high"] > dataframe["peak"].shift(1), "peak_trend_temp"] = 1
+        dataframe.loc[dataframe["peak"] < dataframe["peak"].shift(1), "peak_trend_temp"] = -1
         # Replace 0s (flat periods) with NA, then forward-fill the last known trend
-        dataframe["peak_trend_temp"] = (
-            dataframe["peak_trend_temp"].replace(0, pd.NA).ffill()
-        )
+        dataframe["peak_trend_temp"] = dataframe["peak_trend_temp"].replace(0, pd.NA).ffill()
         # higher_high is True if the prevailing trend of donchian_upper is upwards (1)
-        dataframe["higher_high"] = (
-            (dataframe["peak_trend_temp"] == 1).fillna(False).astype(bool)
-        )
+        dataframe["higher_high"] = (dataframe["peak_trend_temp"] == 1).fillna(False).astype(bool)
         # lower_high is True if the prevailing trend of donchian_upper is downwards (-1)
-        dataframe["lower_high"] = (
-            (dataframe["peak_trend_temp"] == -1).fillna(False).astype(bool)
-        )
+        dataframe["lower_high"] = (dataframe["peak_trend_temp"] == -1).fillna(False).astype(bool)
 
         dataframe["trough_trend_temp"] = 0
-        dataframe.loc[
-            dataframe["trough"] > dataframe["trough"].shift(1), "trough_trend_temp"
-        ] = 1
-        dataframe.loc[
-            dataframe["low"] < dataframe["trough"].shift(1), "trough_trend_temp"
-        ] = -1
+        dataframe.loc[dataframe["trough"] > dataframe["trough"].shift(1), "trough_trend_temp"] = 1
+        dataframe.loc[dataframe["low"] < dataframe["trough"].shift(1), "trough_trend_temp"] = -1
         # 0: flat, 1: rising, -1: falling
         # Replace 0s (flat periods) with NA, then forward-fill the last known trend
-        dataframe["trough_trend_temp"] = (
-            dataframe["trough_trend_temp"].replace(0, pd.NA).ffill()
-        )
+        dataframe["trough_trend_temp"] = dataframe["trough_trend_temp"].replace(0, pd.NA).ffill()
 
         # higher_low is True if the prevailing trend of donchian_lower is upwards (1)
-        dataframe["higher_low"] = (
-            (dataframe["trough_trend_temp"] == 1).fillna(False).astype(bool)
-        )
+        dataframe["higher_low"] = (dataframe["trough_trend_temp"] == 1).fillna(False).astype(bool)
         # lower_low is True if the prevailing trend of donchian_lower is downwards (-1)
-        dataframe["lower_low"] = (
-            (dataframe["trough_trend_temp"] == -1).fillna(False).astype(bool)
-        )
+        dataframe["lower_low"] = (dataframe["trough_trend_temp"] == -1).fillna(False).astype(bool)
 
         # Note: You might want to drop the temporary columns if they are not used elsewhere:
         dataframe.drop(["peak_trend_temp", "trough_trend_temp"], axis=1, inplace=True)
@@ -517,9 +472,7 @@ class FractalStrategy(IStrategy):
         return dataframe
 
     @informative(long_timeframe)
-    def populate_informative_long(
-        self, dataframe: DataFrame, metadata: dict
-    ) -> DataFrame:
+    def populate_informative_long(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
         Populate indicators for long trend confirmation on long_timeframe timeframe
         """
@@ -545,14 +498,10 @@ class FractalStrategy(IStrategy):
         # which is defined as the range between ema10 and ema20
         ema_min = dataframe[["ema10", "ema20"]].min(axis=1)
         ema_max = dataframe[["ema10", "ema20"]].max(axis=1)
-        dataframe["in_cradle"] = (
-            (dataframe["high"] >= ema_min) & (dataframe["low"] <= ema_max)
-        )
+        dataframe["in_cradle"] = (dataframe["high"] >= ema_min) & (dataframe["low"] <= ema_max)
 
         # Laguerre RSI
-        dataframe["laguerre"] = indicators.laguerre(
-            dataframe, gamma=self.laguerre_gamma.value
-        )
+        dataframe["laguerre"] = indicators.laguerre(dataframe, gamma=self.laguerre_gamma.value)
 
         # Momentum and volume indicators
         dataframe["atr"] = ta.ATR(dataframe, timeperiod=14)
@@ -564,11 +513,11 @@ class FractalStrategy(IStrategy):
         )
 
         dataframe["candle_range"] = dataframe["high"] - dataframe["low"]
-        dataframe["bullish_candle"] = (
-            dataframe["close"] > (dataframe["low"] + 0.6 * dataframe["candle_range"])
+        dataframe["bullish_candle"] = dataframe["close"] > (
+            dataframe["low"] + 0.6 * dataframe["candle_range"]
         )
-        dataframe["bearish_candle"] = (
-            dataframe["close"] < (dataframe["high"] - 0.6 * dataframe["candle_range"])
+        dataframe["bearish_candle"] = dataframe["close"] < (
+            dataframe["high"] - 0.6 * dataframe["candle_range"]
         )
         # Small candle condition: candle range must be smaller than small_candle_ratio * ATR
         dataframe["small_candle"] = dataframe["candle_range"] < (
@@ -590,21 +539,33 @@ class FractalStrategy(IStrategy):
             dataframe["low"].rolling(window=major_period, min_periods=1).min()
         )
 
-        dataframe["stop_upper"] = dataframe["high"].rolling(window=primary_period, min_periods=1).max()
-        dataframe["stop_lower"] = dataframe["low"].rolling(window=primary_period, min_periods=1).min()
+        dataframe["stop_upper"] = (
+            dataframe["high"].rolling(window=primary_period, min_periods=1).max()
+        )
+        dataframe["stop_lower"] = (
+            dataframe["low"].rolling(window=primary_period, min_periods=1).min()
+        )
 
         # long_target as the higher between donchian_upper and peak in major timeframe
-        dataframe["long_target"] = dataframe[["donchian_upper", f"peak_{self.major_timeframe}"]].max(axis=1)
+        dataframe["long_target"] = dataframe[
+            ["donchian_upper", f"peak_{self.major_timeframe}"]
+        ].max(axis=1)
         # short_target as the lower between donchian_lower and trough in major timeframe
-        dataframe["short_target"] = dataframe[["donchian_lower", f"trough_{self.major_timeframe}"]].min(axis=1)
+        dataframe["short_target"] = dataframe[
+            ["donchian_lower", f"trough_{self.major_timeframe}"]
+        ].min(axis=1)
 
         # long stop as the lower between stop_lower, trough in primary timeframe,
         # and close - 2 * atr
         dataframe["close_minus_2atr"] = dataframe["close"] - 2 * dataframe["atr"]
-        dataframe["long_stop"] = dataframe[["stop_lower", f"trough_{self.primary_timeframe}", "close_minus_2atr"]].min(axis=1)
+        dataframe["long_stop"] = dataframe[
+            ["stop_lower", f"trough_{self.primary_timeframe}", "close_minus_2atr"]
+        ].min(axis=1)
         # short stop as the higher between stop_upper, peak in primary timeframe,
         dataframe["close_plus_2atr"] = dataframe["close"] + 2 * dataframe["atr"]
-        dataframe["short_stop"] = dataframe[["stop_upper", f"peak_{self.primary_timeframe}", "close_plus_2atr"]].max(axis=1)
+        dataframe["short_stop"] = dataframe[
+            ["stop_upper", f"peak_{self.primary_timeframe}", "close_plus_2atr"]
+        ].max(axis=1)
 
         return dataframe
 
@@ -675,27 +636,27 @@ class FractalStrategy(IStrategy):
 
                 # RR ratio calculation
                 df["long_rr_ratio"] = (
-                    (df[f"donchian_upper_{self.major_timeframe}"] - df["close"])
-                    / (df["close"] - df[f"trough_{self.primary_timeframe}"])
-                )
+                    df[f"donchian_upper_{self.major_timeframe}"] - df["close"]
+                ) / (df["close"] - df[f"trough_{self.primary_timeframe}"])
                 df["short_rr_ratio"] = (
-                    (df["close"] - df[f"donchian_lower_{self.major_timeframe}"])
-                    / (df[f"peak_{self.primary_timeframe}"] - df["close"])
-                )
+                    df["close"] - df[f"donchian_lower_{self.major_timeframe}"]
+                ) / (df[f"peak_{self.primary_timeframe}"] - df["close"])
 
                 df["long_cradle_rr_ratio"] = (
-                    (df[f"donchian_upper_{self.major_timeframe}"] - df["high"])
-                    / (df["high"] - df["stop_lower"])
-                )
+                    df[f"donchian_upper_{self.major_timeframe}"] - df["high"]
+                ) / (df["high"] - df["stop_lower"])
                 df["short_cradle_rr_ratio"] = (
-                    (df["low"] - df[f"donchian_lower_{self.major_timeframe}"])
-                    / (df["stop_upper"] - df["low"])
-                )
+                    df["low"] - df[f"donchian_lower_{self.major_timeframe}"]
+                ) / (df["stop_upper"] - df["low"])
 
                 # --- Trigger conditions ---
                 # LRSI Triggers
-                long_lrsi_trigger = qtpylib.crossed_above(df["laguerre"], self.buy_laguerre_level.value)
-                short_lrsi_trigger = qtpylib.crossed_below(df["laguerre"], self.sell_laguerre_level.value)
+                long_lrsi_trigger = qtpylib.crossed_above(
+                    df["laguerre"], self.buy_laguerre_level.value
+                )
+                short_lrsi_trigger = qtpylib.crossed_below(
+                    df["laguerre"], self.sell_laguerre_level.value
+                )
 
                 # Populate pivots and their trends
                 # df = self._populate_pivots(df, self.convergence_window.value)
@@ -705,7 +666,10 @@ class FractalStrategy(IStrategy):
                     df["in_cradle"]
                     & (df["ema20"] < df["ema10"])
                     & (df[f"higher_high_{self.primary_timeframe}"])
-                    & (df[f"ema20_{self.primary_timeframe}"] < df[f"ema10_{self.primary_timeframe}"])
+                    & (
+                        df[f"ema20_{self.primary_timeframe}"]
+                        < df[f"ema10_{self.primary_timeframe}"]
+                    )
                     & (df["small_candle"])
                 )
 
@@ -713,7 +677,10 @@ class FractalStrategy(IStrategy):
                     df["in_cradle"]
                     & (df["ema20"] > df["ema10"])
                     & (df[f"lower_low_{self.primary_timeframe}"])
-                    & (df[f"ema20_{self.primary_timeframe}"] > df[f"ema10_{self.primary_timeframe}"])
+                    & (
+                        df[f"ema20_{self.primary_timeframe}"]
+                        > df[f"ema10_{self.primary_timeframe}"]
+                    )
                     & (df["small_candle"])
                 )
 
@@ -724,8 +691,12 @@ class FractalStrategy(IStrategy):
                 short_no_high_candles = True
 
                 for i in range(1, window + 1):
-                    long_no_low_candles = long_no_low_candles & (df["high"].shift(i) >= df["ema20"].shift(i))
-                    short_no_high_candles = short_no_high_candles & (df["low"].shift(i) <= df["ema20"].shift(i))
+                    long_no_low_candles = long_no_low_candles & (
+                        df["high"].shift(i) >= df["ema20"].shift(i)
+                    )
+                    short_no_high_candles = short_no_high_candles & (
+                        df["low"].shift(i) <= df["ema20"].shift(i)
+                    )
 
                 long_cradle_base = long_cradle_base & long_no_low_candles
                 short_cradle_base = short_cradle_base & short_no_high_candles
@@ -760,7 +731,9 @@ class FractalStrategy(IStrategy):
                     cond_ptf_chop
                     & (df[f"higher_low_{self.primary_timeframe}"])
                     & (df[f"higher_low_{self.major_timeframe}"])
-                    & (df["close"] > df[primary_peak_col]) # in case primary peak is higher than major
+                    & (
+                        df["close"] > df[primary_peak_col]
+                    )  # in case primary peak is higher than major
                 )
                 short_breakout_condition = (
                     cond_ptf_chop
@@ -768,36 +741,35 @@ class FractalStrategy(IStrategy):
                     & (df[f"lower_high_{self.major_timeframe}"])
                     & (df["close"] < df[primary_trough_col])
                 )
-                long_breakout_trigger = (
-                    qtpylib.crossed_above(df["close"], df[major_peak_col])
-                    & (df[major_peak_col] == df[major_peak_col].shift(1))
+                long_breakout_trigger = qtpylib.crossed_above(df["close"], df[major_peak_col]) & (
+                    df[major_peak_col] == df[major_peak_col].shift(1)
                 )
-                short_breakout_trigger = (
-                    qtpylib.crossed_below(df["close"], df[major_trough_col])
-                    & (df[major_trough_col] == df[major_trough_col].shift(1))
-                )
+                short_breakout_trigger = qtpylib.crossed_below(
+                    df["close"], df[major_trough_col]
+                ) & (df[major_trough_col] == df[major_trough_col].shift(1))
 
                 # --- Base Entry Conditions (excluding triggers) ---
                 base_long_condition = (
-                    df[ha_upswing_col] &
-                    cond_mtf_chop &
-                    df["strong_volume"] &
-                    df["bullish_candle"] &
-                    df["small_candle"]
+                    df[ha_upswing_col]
+                    & cond_mtf_chop
+                    & df["strong_volume"]
+                    & df["bullish_candle"]
+                    & df["small_candle"]
                 )
                 base_short_condition = (
-                    df[ha_downswing_col] &
-                    cond_mtf_chop &
-                    df["strong_volume"] &
-                    df["bearish_candle"] &
-                    df["small_candle"]
+                    df[ha_downswing_col]
+                    & cond_mtf_chop
+                    & df["strong_volume"]
+                    & df["bearish_candle"]
+                    & df["small_candle"]
                 )
 
                 # --- Combine Triggers and Base Conditions ---
                 # Long Entries
                 if self.use_breakout_trigger.value:
-                    long_condition = (base_long_condition & long_breakout_trigger
-                                    & long_breakout_condition)
+                    long_condition = (
+                        base_long_condition & long_breakout_trigger & long_breakout_condition
+                    )
                     df.loc[long_condition, ["enter_long", "enter_tag"]] = (1, "breakout")
 
                 # Use cradle trigger
@@ -808,31 +780,35 @@ class FractalStrategy(IStrategy):
 
                 if self.use_lrsi_trigger.value:
                     long_rr_cond = df["long_rr_ratio"] >= self.rr_ratio.value
-                    long_condition = (base_long_condition
-                        & cond_ptf_chop
-                        & long_lrsi_trigger
-                        & long_rr_cond)
+                    long_condition = (
+                        base_long_condition & cond_ptf_chop & long_lrsi_trigger & long_rr_cond
+                    )
                     df.loc[long_condition, ["enter_long", "enter_tag"]] = (1, "lrsi")
 
                 # Short Entries
                 if self.can_short:
                     if self.use_breakout_trigger.value:
-                        short_condition = (base_short_condition & short_breakout_trigger
-                                           & short_breakout_condition)
+                        short_condition = (
+                            base_short_condition & short_breakout_trigger & short_breakout_condition
+                        )
                         df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "breakout")
 
                     # Use cradle trigger
                     if self.use_cradle_trigger.value:
                         short_rr_cond = df["short_cradle_rr_ratio"] >= 1.0
-                        short_condition = base_short_condition & short_cradle_trigger & short_rr_cond
+                        short_condition = (
+                            base_short_condition & short_cradle_trigger & short_rr_cond
+                        )
                         df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "cradle")
 
                     if self.use_lrsi_trigger.value:
                         short_rr_cond = df["short_rr_ratio"] >= self.rr_ratio.value
-                        short_condition = (base_short_condition
+                        short_condition = (
+                            base_short_condition
                             & cond_ptf_chop
                             & short_lrsi_trigger
-                            & short_rr_cond)
+                            & short_rr_cond
+                        )
                         df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "lrsi")
 
                 # Limit the number of signals to avoid over-trading
@@ -870,6 +846,7 @@ class FractalStrategy(IStrategy):
             # Initialize exit columns
             df["exit_long"] = 0
             df["exit_short"] = 0
+            df["exit_tag"] = ""
 
             try:
                 # Define stop loss columns for different entry types
@@ -888,9 +865,15 @@ class FractalStrategy(IStrategy):
                 major_trough_col = f"trough_{self.major_timeframe}"
 
                 missing_cols = []
-                required_cols = [long_stop_col, short_stop_col, long_cradle_stop_col,
-                                short_cradle_stop_col, primary_atr_col, major_peak_col,
-                                major_trough_col]
+                required_cols = [
+                    long_stop_col,
+                    short_stop_col,
+                    long_cradle_stop_col,
+                    short_cradle_stop_col,
+                    primary_atr_col,
+                    major_peak_col,
+                    major_trough_col,
+                ]
 
                 for col in required_cols:
                     if col not in df.columns:
@@ -903,32 +886,53 @@ class FractalStrategy(IStrategy):
                     return df  # Return df with no exits
 
                 # Create conditions for different entry types
-                # is_lrsi_entry = df["current_enter_tag"] == "lrsi"
-                # is_cradle_entry = df["current_enter_tag"] == "cradle"
-                # is_breakout_entry = df["current_enter_tag"] == "breakout"
+                # Initialize exit conditions
+                exit_long_lrsi = False
+                exit_short_lrsi = False
+                exit_long_cradle = False
+                exit_short_cradle = False
+                exit_long_breakout = False
+                exit_short_breakout = False
 
-                # Exit LONG positions based on entry type
-                exit_long_lrsi = (df["close"] < df[long_stop_col])
-                exit_long_cradle = (df["close"] < df[long_cradle_stop_col])
+                # lrsi
+                if self.use_lrsi_trigger.value:
+                    exit_long_lrsi = df["close"] < df[long_stop_col]
+                    exit_short_lrsi = df["close"] > df[short_stop_col]
+
+                # cradle
+                if self.use_cradle_trigger.value:
+                    exit_long_cradle = df["close"] < df[long_cradle_stop_col]
+                    exit_short_cradle = df["close"] > df[short_cradle_stop_col]
+
                 stoploss_size = self.breakout_stop_ratio.value * df[primary_atr_col]
                 if self.use_breakout_trigger.value:
                     peak_atr_diff = df[major_peak_col] - stoploss_size
-                    exit_long_breakout = df["close"] < peak_atr_diff
-                else:
-                    exit_long_breakout = False
-
-                # Exit SHORT positions based on entry type
-                exit_short_lrsi = (df["close"] > df[short_stop_col])
-                exit_short_cradle = (df["close"] > df[short_cradle_stop_col])
-                if self.use_breakout_trigger.value:
                     trough_atr_diff = df[major_trough_col] + stoploss_size
+                    exit_long_breakout = df["close"] < peak_atr_diff
                     exit_short_breakout = df["close"] > trough_atr_diff
-                else:
-                    exit_short_breakout = False
 
-                # Apply exit conditions
-                df.loc[exit_long_lrsi | exit_long_cradle | exit_long_breakout, 'exit_long'] = 1
-                df.loc[exit_short_lrsi | exit_short_cradle | exit_short_breakout, 'exit_short'] = 1
+                # Apply exit conditions with priority: lrsi > cradle > breakout
+                # Long exits
+                long_exit_mask = exit_long_lrsi | exit_long_cradle | exit_long_breakout
+                df.loc[long_exit_mask, "exit_long"] = 1
+
+                # Set exit tags with priority
+                df.loc[exit_long_lrsi, "exit_tag"] = "lrsi"
+                df.loc[exit_long_cradle & ~exit_long_lrsi, "exit_tag"] = "cradle"
+                df.loc[exit_long_breakout & ~exit_long_lrsi & ~exit_long_cradle, "exit_tag"] = (
+                    "breakout"
+                )
+
+                # Short exits
+                short_exit_mask = exit_short_lrsi | exit_short_cradle | exit_short_breakout
+                df.loc[short_exit_mask, "exit_short"] = 1
+
+                # Set exit tags with priority (for short exits)
+                df.loc[exit_short_lrsi, "exit_tag"] = "lrsi"
+                df.loc[exit_short_cradle & ~exit_short_lrsi, "exit_tag"] = "cradle"
+                df.loc[exit_short_breakout & ~exit_short_lrsi & ~exit_short_cradle, "exit_tag"] = (
+                    "breakout"
+                )
 
                 return df
             except Exception as e_inner:
@@ -937,8 +941,9 @@ class FractalStrategy(IStrategy):
                     f"{str(e_inner)}\n{traceback.format_exc()}"
                 )
                 # Return dataframe with no exits if there's an error
-                df['exit_long'] = 0
-                df['exit_short'] = 0
+                df["exit_long"] = 0
+                df["exit_short"] = 0
+                df["exit_tag"] = ""
                 return df
 
         except Exception as e:
@@ -949,6 +954,7 @@ class FractalStrategy(IStrategy):
             # Return dataframe with no exits if there's an error
             dataframe["exit_long"] = 0
             dataframe["exit_short"] = 0
+            dataframe["exit_tag"] = ""
             return dataframe
 
     def confirm_trade_entry(
@@ -974,16 +980,16 @@ class FractalStrategy(IStrategy):
         prev_candle = dataframe.iloc[-2].squeeze()
         last_candle = dataframe.iloc[-1].squeeze()
 
-        if entry_tag == 'cradle':
+        if entry_tag == "cradle":
             if side == "long":
-                if rate > prev_candle['high']:
+                if rate > prev_candle["high"]:
                     return True
             elif side == "short":
-                if rate < prev_candle['low']:
+                if rate < prev_candle["low"]:
                     return True
             return False
 
-        elif entry_tag == 'breakout':
+        elif entry_tag == "breakout":
             if side == "long":
                 if rate > last_candle[f"peak_{self.major_timeframe}"]:
                     return True
@@ -992,7 +998,7 @@ class FractalStrategy(IStrategy):
                     return True
             return False
 
-        else: # default to "lrsi"
+        else:  # default to "lrsi"
             if side == "long":
                 if rate > last_candle["long_stop"]:
                     return True
@@ -1025,7 +1031,7 @@ class FractalStrategy(IStrategy):
         """
         try:
             # Only apply this logic if the sell reason is 'exit_signal' (from populate_exit_trend)
-            if sell_reason != 'exit_signal':
+            if sell_reason != "exit_signal":
                 return True  # Allow other types of exits (stoploss, roi, etc.)
 
             # Get the dataframe
@@ -1037,7 +1043,7 @@ class FractalStrategy(IStrategy):
             last_candle = dataframe.iloc[-1].squeeze()
 
             # Get custom data from trade
-            default = 0 if not trade.is_short else float('inf')
+            default = 0 if not trade.is_short else float("inf")
             use_dynamic_stop = trade.get_custom_data(key="use_dynamic_stop", default=False)
             dynamic_stop = trade.get_custom_data(key="dynamic_stop", default=default)
             initial_stop_loss = trade.get_custom_data(key="initial_stop_loss", default=default)
@@ -1084,7 +1090,7 @@ class FractalStrategy(IStrategy):
         price_diff_to_stop = 0.0
 
         side = "long" if not trade.is_short else "short"
-        entry_tag = trade.enter_tag if hasattr(trade, 'enter_tag') else 'lrsi'
+        entry_tag = trade.enter_tag if hasattr(trade, "enter_tag") else "lrsi"
 
         # Determine stop loss and take profit levels based on entry type
         if entry_tag == "cradle":
@@ -1173,11 +1179,9 @@ class FractalStrategy(IStrategy):
             last_candle = dataframe.iloc[-1].squeeze()
 
             # Get the entry tag to determine stop loss method
-            entry_tag = trade.enter_tag if hasattr(trade, 'enter_tag') else 'lrsi'
+            entry_tag = trade.enter_tag if hasattr(trade, "enter_tag") else "lrsi"
 
-            take_profit_reduced = trade.get_custom_data(
-                key="take_profit_reduced", default=False
-            )
+            take_profit_reduced = trade.get_custom_data(key="take_profit_reduced", default=False)
 
             # Get the dynamic stop and initial stop from trade custom data
             dynamic_stop = trade.get_custom_data(key="dynamic_stop", default=None)
@@ -1202,34 +1206,47 @@ class FractalStrategy(IStrategy):
 
             # If we're not after fill or the stop loss is already initialized, proceed with normal logic
             if not after_fill or initial_stop is not None:
-                trailing_atr = self.atr_stop_ratio.value * last_candle['atr']
+                trailing_atr = self.atr_stop_ratio.value * last_candle["atr"]
 
                 # Determine if we should start using dynamic stop
                 # Conditions to start using dynamic stop:
                 # 1. Price has increased or decreased by 2x ATR
                 # 2. Or the trough/peak has moved from its initial value
                 if not use_dynamic_stop:
-                    price_increased = (not trade.is_short and last_candle["high"] >=
-                                       (trade.open_rate + 2 * last_candle['atr']))
-                    price_decreased = (trade.is_short and last_candle["low"] <=
-                                       (trade.open_rate - 2 * last_candle['atr']))
+                    price_increased = not trade.is_short and last_candle["high"] >= (
+                        trade.open_rate + 2 * last_candle["atr"]
+                    )
+                    price_decreased = trade.is_short and last_candle["low"] <= (
+                        trade.open_rate - 2 * last_candle["atr"]
+                    )
 
                     # Determine if stop level has changed
                     if entry_tag == "cradle":
                         if not trade.is_short:
                             stop_changed = (last_candle.get("stop_lower", 0)) != initial_stop
                         else:
-                            stop_changed = (last_candle.get("stop_upper", float("inf"))) != initial_stop
-                    else: # breakout and lrsi
+                            stop_changed = (
+                                last_candle.get("stop_upper", float("inf"))
+                            ) != initial_stop
+                    else:  # breakout and lrsi
                         if not trade.is_short:
                             initial_trough = trade.get_custom_data(key="initial_trough")
-                            stop_changed = (last_candle.get(f"trough_{self.primary_timeframe}", 0) != initial_trough)
+                            stop_changed = (
+                                last_candle.get(f"trough_{self.primary_timeframe}", 0)
+                                != initial_trough
+                            )
                         else:
                             initial_peak = trade.get_custom_data(key="initial_peak")
-                            stop_changed = (last_candle.get(f"peak_{self.primary_timeframe}", float("inf")) != initial_peak)
+                            stop_changed = (
+                                last_candle.get(f"peak_{self.primary_timeframe}", float("inf"))
+                                != initial_peak
+                            )
 
-                    if (price_increased or price_decreased or  # profit
-                        stop_changed):
+                    if (
+                        price_increased
+                        or price_decreased  # profit
+                        or stop_changed
+                    ):
                         # logger.debug(f"Enabling dynamic stop for {pair} ({'short' if trade.is_short else 'long'}): "
                         #       f"Profit: {current_profit:.2%}, "
                         #       f"Stop changed: {stop_changed}")
@@ -1272,7 +1289,11 @@ class FractalStrategy(IStrategy):
                         current_stop = last_candle.get(f"trough_{self.primary_timeframe}", 0)
 
                     # Update dynamic stop if we're using dynamic stop and current stop is higher
-                    if use_dynamic_stop and dynamic_stop is not None and current_stop > dynamic_stop:
+                    if (
+                        use_dynamic_stop
+                        and dynamic_stop is not None
+                        and current_stop > dynamic_stop
+                    ):
                         dynamic_stop = current_stop
                         trade.set_custom_data(key="dynamic_stop", value=dynamic_stop)
 
@@ -1291,10 +1312,16 @@ class FractalStrategy(IStrategy):
                     if entry_tag == "cradle":
                         current_stop = last_candle.get("stop_upper", float("inf"))
                     else:  # for breakout and lrsi
-                        current_stop = last_candle.get(f"peak_{self.primary_timeframe}", float("inf"))
+                        current_stop = last_candle.get(
+                            f"peak_{self.primary_timeframe}", float("inf")
+                        )
 
                     # Update dynamic stop if we're using dynamic stop and current stop is lower
-                    if use_dynamic_stop and dynamic_stop is not None and current_stop < dynamic_stop:
+                    if (
+                        use_dynamic_stop
+                        and dynamic_stop is not None
+                        and current_stop < dynamic_stop
+                    ):
                         dynamic_stop = current_stop
                         trade.set_custom_data(key="dynamic_stop", value=dynamic_stop)
 
@@ -1380,9 +1407,7 @@ class FractalStrategy(IStrategy):
         # max_open_trades from strategy config
         max_open_trades = self.config.get("max_open_trades", 1)
         if not isinstance(max_open_trades, int) or max_open_trades <= 0:
-            logger.warning(
-                f"Invalid max_open_trades value: {max_open_trades}. Defaulting to 1."
-            )
+            logger.warning(f"Invalid max_open_trades value: {max_open_trades}. Defaulting to 1.")
             max_open_trades = 1
 
         if open_trades_count >= max_open_trades:
@@ -1395,9 +1420,7 @@ class FractalStrategy(IStrategy):
             return 0.0
 
         collateral_per_slot = total_equity / available_slots
-        logger.debug(
-            f"collateral per slot: {collateral_per_slot} {total_equity} {available_slots}"
-        )
+        logger.debug(f"collateral per slot: {collateral_per_slot} {total_equity} {available_slots}")
         return collateral_per_slot
 
     def custom_stake_amount(
@@ -1413,7 +1436,6 @@ class FractalStrategy(IStrategy):
         side: str,
         **kwargs,
     ) -> float:
-
         total_equity = self.get_total_equity()
         collateral_per_slot = self._get_collateral_per_trade_slot(total_equity)
 
@@ -1424,9 +1446,7 @@ class FractalStrategy(IStrategy):
             actual_stake_to_use = max(actual_stake_to_use, min_stake)
         actual_stake_to_use = min(actual_stake_to_use, max_stake)
 
-        logger.debug(
-            f"Actual_stake_to_use ({pair}): {actual_stake_to_use} {collateral_per_slot}"
-        )
+        logger.debug(f"Actual_stake_to_use ({pair}): {actual_stake_to_use} {collateral_per_slot}")
         return actual_stake_to_use
 
     def leverage(
@@ -1477,9 +1497,7 @@ class FractalStrategy(IStrategy):
             if side == "long":
                 raw_stop_price = last_candle.get("stop_lower")
                 if pd.isna(raw_stop_price):
-                    logger.warning(
-                        f"Leverage: stop_lower is np.nan for {pair} on {current_time}."
-                    )
+                    logger.warning(f"Leverage: stop_lower is np.nan for {pair} on {current_time}.")
                     return 0.0  # Stop-loss level not found or np.nan
                 stop_loss_price = raw_stop_price * self.down_slippage
                 if current_rate <= stop_loss_price:
@@ -1488,9 +1506,7 @@ class FractalStrategy(IStrategy):
             elif side == "short":
                 raw_stop_price = last_candle.get("stop_upper")
                 if pd.isna(raw_stop_price):
-                    logger.warning(
-                        f"Leverage: stop_upper is np.nan for {pair} on {current_time}."
-                    )
+                    logger.warning(f"Leverage: stop_upper is np.nan for {pair} on {current_time}.")
                     return 0.0  # Stop-loss level not found or np.nan
                 stop_loss_price = raw_stop_price * self.up_slippage
                 if current_rate >= stop_loss_price:
@@ -1525,9 +1541,7 @@ class FractalStrategy(IStrategy):
             if side == "long":
                 raw_stop_price = last_candle.get("long_stop")
                 if pd.isna(raw_stop_price):
-                    logger.warning(
-                        f"Leverage: long_stop is np.nan for {pair} on {current_time}."
-                    )
+                    logger.warning(f"Leverage: long_stop is np.nan for {pair} on {current_time}.")
                     return 0.0  # Stop-loss level not found or np.nan
                 stop_loss_price = raw_stop_price * self.down_slippage
                 if current_rate <= stop_loss_price:
@@ -1536,9 +1550,7 @@ class FractalStrategy(IStrategy):
             elif side == "short":
                 raw_stop_price = last_candle.get("short_stop")
                 if pd.isna(raw_stop_price):
-                    logger.warning(
-                        f"Leverage: short_stop is np.nan for {pair} on {current_time}."
-                    )
+                    logger.warning(f"Leverage: short_stop is np.nan for {pair} on {current_time}.")
                     return 0.0  # Stop-loss level not found or np.nan
                 stop_loss_price = raw_stop_price * self.up_slippage
                 if current_rate >= stop_loss_price:
@@ -1549,9 +1561,7 @@ class FractalStrategy(IStrategy):
             logger.error(f"Leverage: Invalid side '{side}' received.")
             return 0.0  # Should not happen
 
-        if (
-            price_diff_to_stop <= 1e-7
-        ):  # Avoid division by zero or very small stop distance
+        if price_diff_to_stop <= 1e-7:  # Avoid division by zero or very small stop distance
             return 0.0  # Stop too close, do not enter
 
         # Desired position size in base currency
@@ -1560,18 +1570,12 @@ class FractalStrategy(IStrategy):
         desired_position_value_stake_curr = desired_position_size_base * current_rate
 
         # Collateral Freqtrade would allocate for this trade slot by default.
-        collateral_for_this_trade_slot = self._get_collateral_per_trade_slot(
-            total_equity
-        )
+        collateral_for_this_trade_slot = self._get_collateral_per_trade_slot(total_equity)
 
-        if (
-            collateral_for_this_trade_slot <= 1e-7
-        ):  # Effectively zero collateral per slot
+        if collateral_for_this_trade_slot <= 1e-7:  # Effectively zero collateral per slot
             return 0.0  # No collateral available per slot, do not trade
 
-        required_leverage = (
-            desired_position_value_stake_curr / collateral_for_this_trade_slot
-        )
+        required_leverage = desired_position_value_stake_curr / collateral_for_this_trade_slot
 
         if required_leverage <= 1e-7:  # Effectively zero or negative desired leverage
             return 0.0  # Do not trade
@@ -1613,9 +1617,7 @@ class FractalStrategy(IStrategy):
         last_candle = dataframe.iloc[-1].squeeze()
 
         # Calculate take profit levels based on entry type
-        self._set_trade_initial_values(
-            trade, last_candle
-        )
+        self._set_trade_initial_values(trade, last_candle)
 
         return None
 
@@ -1651,9 +1653,7 @@ class FractalStrategy(IStrategy):
             return
 
         take_profit_price = trade.get_custom_data(key="take_profit_price")
-        take_profit_reduced = trade.get_custom_data(
-            key="take_profit_reduced", default=False
-        )
+        take_profit_reduced = trade.get_custom_data(key="take_profit_reduced", default=False)
 
         # Check if we've reached take profit price and haven't reduced position yet
         # For long positions: current_rate >= take_profit_price
@@ -1747,23 +1747,15 @@ class FractalStrategy(IStrategy):
             return annotations
 
         # Identify significant peak and trough changes
-        df_filtered["peak_change"] = df_filtered[peak_col] != df_filtered[
-            peak_col
-        ].shift(1)
-        df_filtered["trough_change"] = df_filtered[trough_col] != df_filtered[
-            trough_col
-        ].shift(1)
+        df_filtered["peak_change"] = df_filtered[peak_col] != df_filtered[peak_col].shift(1)
+        df_filtered["trough_change"] = df_filtered[trough_col] != df_filtered[trough_col].shift(1)
         df_filtered["significant_change"] = (
             df_filtered["peak_change"] | df_filtered["trough_change"]
         )
 
         # Always include start_date and end_date as transition points
-        df_filtered.loc[df_filtered.index[0], "significant_change"] = (
-            True  # First row (start_date)
-        )
-        df_filtered.loc[df_filtered.index[-1], "significant_change"] = (
-            True  # Last row (end_date)
-        )
+        df_filtered.loc[df_filtered.index[0], "significant_change"] = True  # First row (start_date)
+        df_filtered.loc[df_filtered.index[-1], "significant_change"] = True  # Last row (end_date)
 
         # Get transition points where peaks or troughs change
         transition_points = df_filtered[df_filtered["significant_change"]].copy()
@@ -1807,7 +1799,7 @@ class FractalStrategy(IStrategy):
                     "end": current_point["date"],
                     "type": range_type,
                     "start_peak": prev_peak,
-                    "start_trough": prev_trough
+                    "start_trough": prev_trough,
                 }
             )
 
@@ -1819,13 +1811,9 @@ class FractalStrategy(IStrategy):
 
             # Set colors based on market structure bias
             if range_data["type"] == "bullish":
-                color = (
-                    "rgba(144, 238, 144, 0.3)"  # Light green - for bullish structure
-                )
+                color = "rgba(144, 238, 144, 0.3)"  # Light green - for bullish structure
             elif range_data["type"] == "bearish":
-                color = (
-                    "rgba(255, 182, 193, 0.3)"  # Light pink/red - for bearish structure
-                )
+                color = "rgba(255, 182, 193, 0.3)"  # Light pink/red - for bearish structure
             elif range_data["type"] == "neutral":
                 color = "rgba(255, 255, 224, 0.3)"  # Light yellow - for neutral/consolidation
             else:
@@ -1833,9 +1821,7 @@ class FractalStrategy(IStrategy):
                 continue
 
             # Only create annotation if there's a meaningful price difference
-            if (
-                y_end > y_start and (y_end - y_start) / y_start > 0.001
-            ):  # At least 0.1% difference
+            if y_end > y_start and (y_end - y_start) / y_start > 0.001:  # At least 0.1% difference
                 annotations.append(
                     {
                         "type": "area",
@@ -1852,7 +1838,5 @@ class FractalStrategy(IStrategy):
                     f"Skipping annotation with insufficient price range: {y_start:.6f} - {y_end:.6f}"
                 )
 
-        logger.debug(
-            f"Created {len(annotations)} market structure annotations for {pair}"
-        )
+        logger.debug(f"Created {len(annotations)} market structure annotations for {pair}")
         return annotations

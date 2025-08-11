@@ -55,12 +55,9 @@ while current_date < end_date_dt:
     next_date = current_date + timedelta(days=date_range_days)
     if next_date > end_date_dt:
         next_date = end_date_dt
-    date_ranges.append((
-        current_date.strftime("%Y-%m-%d"),
-        next_date.strftime("%Y-%m-%d")
-    ))
+    date_ranges.append((current_date.strftime("%Y-%m-%d"), next_date.strftime("%Y-%m-%d")))
     current_date = next_date + timedelta(days=1)  # Move to the day after next_date to avoid overlap
-base_currency = "USDT" # Assuming USDT as the common quote and stake currency
+base_currency = "USDT"  # Assuming USDT as the common quote and stake currency
 stake_currency = "USDT"
 
 # Initialize exchange first (this sets candle_type_def automatically)
@@ -86,18 +83,20 @@ all_trades = load_backtest_data(backtest_dir)
 
 pair = "ETH/USDT:USDT"
 candles = load_pair_history(
-    datadir=data_location, # This will be used inside the loop per pair
-    timeframe=config["timeframe"], # This will be used inside the loop per pair
-    pair=pair, # Placeholder, will be overridden in loop
+    datadir=data_location,  # This will be used inside the loop per pair
+    timeframe=config["timeframe"],  # This will be used inside the loop per pair
+    pair=pair,  # Placeholder, will be overridden in loop
     data_format="feather",
-    candle_type=CandleType.FUTURES, # This will be used inside the loop per pair
-) # This initial call might not be strictly necessary if immediately looped
+    candle_type=CandleType.FUTURES,  # This will be used inside the loop per pair
+)  # This initial call might not be strictly necessary if immediately looped
 
-print(candles.loc[
-    (candles['date'] >= datetime(2025, 7, 15, 7, 30, tzinfo=UTC)) &
-    (candles['date'] <= datetime(2025, 7, 15, 8, 15, tzinfo=UTC)),
-    ['date', 'open', 'close', 'high', 'low', 'volume']
-])
+print(
+    candles.loc[
+        (candles["date"] >= datetime(2025, 7, 15, 7, 30, tzinfo=UTC))
+        & (candles["date"] <= datetime(2025, 7, 15, 8, 15, tzinfo=UTC)),
+        ["date", "open", "close", "high", "low", "volume"],
+    ]
+)
 
 
 df = loaded_strategy.analyze_ticker(candles, {"pair": pair})
@@ -108,18 +107,18 @@ import json
 
 # print(json.dumps(df.columns, indent=2, default=str))
 import pandas as pd
-pd.set_option('display.max_columns', None)
+
+pd.set_option("display.max_columns", None)
 print("All available columns:")
 print(df.columns.tolist())
-print(df.loc[
-    (df['date'] >= datetime(2025, 8, 1, 7, 30, tzinfo=UTC)) &
-    (df['date'] <= datetime(2025, 8, 1, 22, 15, tzinfo=UTC))
-    & (
-        df['bullish_convergence_15m']
-        | df['bearish_convergence_15m']
-    ),
-    ['date', 'high', 'low', 'bullish_convergence_15m', 'bearish_convergence_15m']
-])
+print(
+    df.loc[
+        (df["date"] >= datetime(2025, 8, 1, 7, 30, tzinfo=UTC))
+        & (df["date"] <= datetime(2025, 8, 1, 22, 15, tzinfo=UTC))
+        & (df["bullish_convergence_15m"] | df["bearish_convergence_15m"]),
+        ["date", "high", "low", "bullish_convergence_15m", "bearish_convergence_15m"],
+    ]
+)
 # print(all_trades)
 
 start_date = datetime.strptime("2025-07-15", "%Y-%m-%d").replace(tzinfo=UTC)
@@ -135,9 +134,8 @@ annotations = loaded_strategy.plot_annotations(
 # pprint.pprint(annotations)
 
 
-
 # Convert the DataFrame to a list of dictionaries
-trades_list = all_trades.to_dict('records')
+trades_list = all_trades.to_dict("records")
 
 # Convert to pretty-printed JSON
 # print("\nFull trades data in JSON format:")
