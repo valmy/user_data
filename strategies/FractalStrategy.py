@@ -144,16 +144,16 @@ class FractalStrategy(IStrategy):
 
     # Laguerre RSI parameters
     laguerre_gamma = DecimalParameter(
-        0.6, 0.8, default=0.68, decimals=2, space="buy", load=True, optimize=True
+        0.55, 0.70, default=0.68, decimals=2, space="buy", load=True, optimize=True
     )
     small_candle_ratio = DecimalParameter(
         1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=True
     )
     buy_laguerre_level = DecimalParameter(
-        0.1, 0.4, default=0.2, decimals=1, space="buy", load=True, optimize=False
+        0.1, 0.4, default=0.2, decimals=1, space="buy", load=False, optimize=False
     )
     sell_laguerre_level = DecimalParameter(
-        0.6, 0.9, default=0.8, decimals=1, space="sell", load=True, optimize=False
+        0.6, 0.9, default=0.8, decimals=1, space="sell", load=False, optimize=False
     )  # For short entry, cross below this
 
     # Choppiness Index parameters
@@ -161,7 +161,7 @@ class FractalStrategy(IStrategy):
     major_chop_threshold = IntParameter(35, 50, default=40, space="buy", load=False, optimize=False)
 
     rr_ratio = DecimalParameter(
-        1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=True
+        1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=False
     )
 
     # Custom trade size parameters
@@ -175,11 +175,11 @@ class FractalStrategy(IStrategy):
     )
 
     breakout_stop_ratio = DecimalParameter(
-        1.0, 5.0, default=2.0, decimals=1, space="sell", load=True, optimize=False
+        1.0, 5.0, default=2.0, decimals=1, space="breakout", load=True, optimize=False
     )
 
     slippage = DecimalParameter(
-        0.001, 0.01, default=0.001, decimals=3, space="sell", load=True, optimize=False
+        0.001, 0.005, default=0.001, decimals=3, space="sell", load=True, optimize=False
     )
     down_slippage = 1 - slippage.value
     up_slippage = 1 + slippage.value
@@ -389,7 +389,7 @@ class FractalStrategy(IStrategy):
         )
         # MACD
         dataframe.ta.macd(fast=12, slow=26, signal=9, append=True)
-        dataframe = self._populate_pivots(dataframe, self.convergence_window.value)
+        # dataframe = self._populate_pivots(dataframe, self.convergence_window.value)
 
         # Choppiness Index
         dataframe["chop"] = pta.chop(

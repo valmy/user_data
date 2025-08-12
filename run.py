@@ -181,6 +181,35 @@ if do_generate_charts:
     from datetime import datetime, timedelta
     from plotly.subplots import make_subplots
 
+    # Cleanup charts directory before processing
+    charts_dir = Path(project_root) / "user_data" / "charts"
+    try:
+        # Ensure directory exists (create if missing)
+        charts_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"Warning: Unable to ensure charts directory exists at {charts_dir}: {e}")
+
+    # If the directory exists, remove files within it (preserve the directory itself)
+    if charts_dir.exists() and charts_dir.is_dir():
+        try:
+            for entry in charts_dir.iterdir():
+                try:
+                    if entry.is_file() or entry.is_symlink():
+                        entry.unlink()
+                    else:
+                        # Preserve subdirectories; do not delete recursively
+                        pass
+                except PermissionError as pe:
+                    print(f"Permission denied while removing {entry}: {pe}")
+                except OSError as oe:
+                    print(f"OS error while removing {entry}: {oe}")
+        except Exception as e:
+            print(f"Warning: Issue while cleaning charts directory {charts_dir}: {e}")
+    else:
+        # charts_dir may be a file or otherwise inaccessible
+        print(f"Warning: Charts path is not a directory or cannot be accessed: {charts_dir}")
+
+
     for start_date, end_date in date_ranges:
         for pair_symbol in pairs_symbols:
             pair = f"{pair_symbol}/{base_currency}:{stake_currency}"
@@ -433,7 +462,7 @@ if do_generate_charts:
                         x=data_red.date,
                         y=data_red[major_trough_col],
                         name=f"Major Trough ({major_timeframe})",
-                        line=dict(color=px.colors.qualitative.Pastel[1], width=1),
+                        line=dict(color=px.colors.qualitative.Pastel[6], width=1),
                     ),
                     row=1,
                     col=1,
