@@ -194,12 +194,30 @@ class FractalStrategy(IStrategy):
             ratio = self.config.get("tradable_balance_ratio", 1.0)
             wallet = self.config.get("dry_run_wallet", 1000)
             logger.debug(f"get_total_equity: Using config values. Ratio: {ratio}, Wallet: {wallet}")
-            return ratio * wallet
+            # return ratio * wallet
+            return 1000
         else:
             logger.debug(
                 f"get_total_equity: Using live wallet balance: {self.wallets.get_total_stake_amount()}"
             )
             return self.wallets.get_total_stake_amount()
+
+    def get_available_stake(self):
+        if self.is_hyperopt_mode():
+            open_trades_count = len(Trade.get_trades_proxy(is_open=True))
+            # max_open_trades from strategy config
+            max_open_trades = self.config.get("max_open_trades", 1)
+            if not isinstance(max_open_trades, int) or max_open_trades <= 0:
+                logger.warning(f"Invalid max_open_trades value: {max_open_trades}. Defaulting to 1.")
+                max_open_trades = 1
+
+            if open_trades_count >= max_open_trades:
+                return 0.0  # No slots available
+
+            available_slots = max_open_trades - open_trades_count
+            return self.get_total_equity() * available_slots / max_open_trades
+        else:
+            return self.wallets.get_available_stake_amount()
 
     def informative_pairs(self):
         """
@@ -1394,13 +1412,13 @@ class FractalStrategy(IStrategy):
             logger.error(f"Error in custom_stop_loss: {str(e)}")
             return None
 
-    def _get_collateral_per_trade_slot(self, total_equity: float) -> float:
+    def _get_collateral_per_trade_slot(self, available_stake_amount: float) -> float:
         """
         Calculate collateral per trade slot
-        based on total equity and available trade slots.
+        based on available stake amount and available trade slots.
         Returns 0.0 if no slots are available or total_equity is 0.
         """
-        if total_equity <= 1e-7:  # Effectively zero
+        if available_stake_amount <= 1e-7:  # Effectively zero
             return 0.0
 
         open_trades_count = len(Trade.get_trades_proxy(is_open=True))
@@ -1419,8 +1437,8 @@ class FractalStrategy(IStrategy):
         if available_slots <= 0:
             return 0.0
 
-        collateral_per_slot = total_equity / available_slots
-        logger.debug(f"collateral per slot: {collateral_per_slot} {total_equity} {available_slots}")
+        collateral_per_slot = available_stake_amount / available_slots
+        logger.debug(f"collateral per slot: {collateral_per_slot} {available_stake_amount} {available_slots}")
         return collateral_per_slot
 
     def custom_stake_amount(
@@ -1436,8 +1454,8 @@ class FractalStrategy(IStrategy):
         side: str,
         **kwargs,
     ) -> float:
-        total_equity = self.get_total_equity()
-        collateral_per_slot = self._get_collateral_per_trade_slot(total_equity)
+        available_stake = self.get_available_stake()
+        collateral_per_slot = self._get_collateral_per_trade_slot(available_stake)
 
         actual_stake_to_use = collateral_per_slot
 
@@ -1472,14 +1490,14 @@ class FractalStrategy(IStrategy):
         - If calculated leverage > max_leverage, do not enter (return 0.0).
         """
         # Get total equity in stake currency
-        total_equity = self.get_total_equity()
-        logger.debug(f"Leverage: Calculating total equity for {pair}: {total_equity}")
+        available_stake = self.get_available_stake()
+        logger.debug(f"Leverage: Calculating available stake for {pair}: {available_stake}")
 
-        if total_equity <= 1e-7:  # Effectively zero equity
+        if available_stake <= 1e-7:  # Effectively zero equity
             return 0.0  # Not enough equity to calculate leverage
 
         # Calculate risk amount in stake currency
-        risk_amount_stake_curr = total_equity * self.max_risk_per_trade.value
+        risk_amount_stake_curr = available_stake * self.max_risk_per_trade.value
 
         analyzed_df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         if analyzed_df.empty:
@@ -1570,7 +1588,7 @@ class FractalStrategy(IStrategy):
         desired_position_value_stake_curr = desired_position_size_base * current_rate
 
         # Collateral Freqtrade would allocate for this trade slot by default.
-        collateral_for_this_trade_slot = self._get_collateral_per_trade_slot(total_equity)
+        collateral_for_this_trade_slot = self._get_collateral_per_trade_slot(available_stake)
 
         if collateral_for_this_trade_slot <= 1e-7:  # Effectively zero collateral per slot
             return 0.0  # No collateral available per slot, do not trade

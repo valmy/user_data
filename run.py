@@ -1,13 +1,12 @@
-import os
+import argparse
 import json
-from datetime import UTC, datetime, timedelta
+import os
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from strategies.FractalStrategy import FractalStrategy
-
 from freqtrade.configuration import Configuration
 from freqtrade.data.btanalysis import load_backtest_data, load_backtest_stats
 from freqtrade.data.dataprovider import DataProvider
@@ -15,7 +14,9 @@ from freqtrade.data.history import load_pair_history
 from freqtrade.enums import CandleType
 from freqtrade.exchange.binance import Binance
 from freqtrade.resolvers import StrategyResolver
-import argparse
+from plotly.subplots import make_subplots
+
+from strategies.FractalStrategy import FractalStrategy
 
 # Change directory
 # Modify this cell to insure that the output shows the correct path.
@@ -115,10 +116,13 @@ major_timeframe = strategy.major_timeframe
 long_timeframe = strategy.long_timeframe
 
 
-def plot_trades(fig, trades: pd.DataFrame) -> "make_subplots":
+def plot_trades(fig, trades: pd.DataFrame, end_time: datetime) -> "make_subplots":
     """
     Add trades to "fig"
     """
+    # Ensure end_time is timezone-aware (UTC) to match trades['close_date']
+    if isinstance(end_time, datetime) and end_time.tzinfo is None:
+        end_time = end_time.replace(tzinfo=UTC)
     # Trades can be empty
     if trades is not None and len(trades) > 0:
         # Create description for exit summarizing the trade
@@ -130,8 +134,8 @@ def plot_trades(fig, trades: pd.DataFrame) -> "make_subplots":
             axis=1,
         )
         # Separate long and short entries
-        long_trades = trades[trades["is_short"] == False]
-        short_trades = trades[trades["is_short"] == True]
+        long_trades = trades[~trades["is_short"]]
+        short_trades = trades[trades["is_short"]]
 
         long_trade_entries = go.Scatter(
             x=long_trades["open_date"],
@@ -151,19 +155,31 @@ def plot_trades(fig, trades: pd.DataFrame) -> "make_subplots":
             marker=dict(symbol="triangle-down-open", size=11, line=dict(width=2), color="cyan"),
         )
 
-        # Exits remain the same, or you can also differentiate them if needed
+        # Exits: include only those with close_date before end_time
         trade_exits = go.Scatter(
-            x=trades.loc[trades["profit_ratio"] > 0, "close_date"],
-            y=trades.loc[trades["profit_ratio"] > 0, "close_rate"],
-            text=trades.loc[trades["profit_ratio"] > 0, "desc"],
+            x=trades.loc[
+                (trades["profit_ratio"] > 0) & (trades["close_date"] < end_time), "close_date"
+            ],
+            y=trades.loc[
+                (trades["profit_ratio"] > 0) & (trades["close_date"] < end_time), "close_rate"
+            ],
+            text=trades.loc[
+                (trades["profit_ratio"] > 0) & (trades["close_date"] < end_time), "desc"
+            ],
             mode="markers",
             name="Exit - Profit",
             marker=dict(symbol="square-open", size=11, line=dict(width=2), color="green"),
         )
         trade_exits_loss = go.Scatter(
-            x=trades.loc[trades["profit_ratio"] <= 0, "close_date"],
-            y=trades.loc[trades["profit_ratio"] <= 0, "close_rate"],
-            text=trades.loc[trades["profit_ratio"] <= 0, "desc"],
+            x=trades.loc[
+                (trades["profit_ratio"] <= 0) & (trades["close_date"] < end_time), "close_date"
+            ],
+            y=trades.loc[
+                (trades["profit_ratio"] <= 0) & (trades["close_date"] < end_time), "close_rate"
+            ],
+            text=trades.loc[
+                (trades["profit_ratio"] <= 0) & (trades["close_date"] < end_time), "desc"
+            ],
             mode="markers",
             name="Exit - Loss",
             marker=dict(symbol="square-open", size=11, line=dict(width=2), color="red"),
@@ -178,9 +194,6 @@ def plot_trades(fig, trades: pd.DataFrame) -> "make_subplots":
 
 
 if do_generate_charts:
-    from datetime import datetime, timedelta
-    from plotly.subplots import make_subplots
-
     # Cleanup charts directory before processing
     charts_dir = Path(project_root) / "user_data" / "charts"
     try:
@@ -208,7 +221,6 @@ if do_generate_charts:
     else:
         # charts_dir may be a file or otherwise inaccessible
         print(f"Warning: Charts path is not a directory or cannot be accessed: {charts_dir}")
-
 
     for start_date, end_date in date_ranges:
         for pair_symbol in pairs_symbols:
@@ -266,7 +278,7 @@ if do_generate_charts:
                 fig.write_html(html_filename)
 
                 # Add navigation controls
-                with open(html_filename, "r+") as f:
+                with Path(html_filename).open("r+") as f:
                     content = f.read()
                     body_index = content.find("<body>") + 6
                     nav_html = f"""
@@ -792,7 +804,7 @@ if do_generate_charts:
                 xaxis_rangeslider_visible=False,
             )
 
-            plot_trades(fig, trades_red)
+            plot_trades(fig, trades_red, end_date_plus_dt)
 
             # Customize grid
             fig.update_xaxes(gridcolor="#1f1f1f", zerolinecolor="#1f1f1f")
@@ -805,7 +817,7 @@ if do_generate_charts:
             fig.write_html(html_filename)
 
             # Add navigation and asset selector
-            with open(html_filename, "r+") as f:
+            with Path(html_filename).open("r+") as f:
                 content = f.read()
                 body_index = content.find("<body>") + 6
                 nav_html = f"""
