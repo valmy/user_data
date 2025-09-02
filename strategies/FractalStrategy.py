@@ -126,7 +126,7 @@ class FractalStrategy(IStrategy):
     # Trigger type
     use_lrsi_trigger = BooleanParameter(default=True, space="buy", optimize=False)
     # Parameters for cradle convergence
-    use_cradle_trigger = BooleanParameter(default=True, space="buy", optimize=False)
+    use_cradle_trigger = BooleanParameter(default=False, space="buy", optimize=False)
     convergence_window = IntParameter(3, 10, default=5, space="buy", optimize=False)
     use_breakout_trigger = BooleanParameter(default=False, space="buy", optimize=False)
 
