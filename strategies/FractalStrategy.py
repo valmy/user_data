@@ -140,14 +140,16 @@ class FractalStrategy(IStrategy):
     )
 
     # Parameters for tuning
-    volume_threshold = DecimalParameter(1.0, 4.0, default=2, decimals=1, space="buy", optimize=True)
+    volume_threshold = DecimalParameter(
+        1.0, 4.0, default=2, decimals=1, space="buy", optimize=False
+    )
 
     # Laguerre RSI parameters
     laguerre_gamma = DecimalParameter(
-        0.55, 0.70, default=0.68, decimals=2, space="buy", load=True, optimize=True
+        0.55, 0.70, default=0.68, decimals=2, space="buy", load=True, optimize=False
     )
     small_candle_ratio = DecimalParameter(
-        1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=True
+        1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=False
     )
     buy_laguerre_level = DecimalParameter(
         0.1, 0.4, default=0.2, decimals=1, space="buy", load=False, optimize=False
@@ -157,12 +159,17 @@ class FractalStrategy(IStrategy):
     )  # For short entry, cross below this
 
     # Choppiness Index parameters
-    primary_chop_threshold = IntParameter(35, 60, default=45, space="buy", load=True, optimize=True)
+    primary_chop_threshold = IntParameter(
+        35, 60, default=45, space="buy", load=True, optimize=False
+    )
     major_chop_threshold = IntParameter(35, 50, default=40, space="buy", load=False, optimize=False)
 
     rr_ratio = DecimalParameter(
         1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=False
     )
+
+    # EMA requirements: 0 = no ema, 1 = ema10, 2 = ema20, 3 = ema50, 4 ema200
+    ema_level = IntParameter(0, 4, default=2, space="buy", load=True, optimize=True)
 
     # Custom trade size parameters
     max_risk_per_trade = DecimalParameter(
@@ -183,6 +190,56 @@ class FractalStrategy(IStrategy):
     )
     down_slippage = 1 - slippage.value
     up_slippage = 1 + slippage.value
+
+    def _get_ema_conditions(self, df: DataFrame) -> tuple:
+        """
+        Generate EMA conditions based on ema_level parameter.
+        Returns tuple of (long_condition, short_condition)
+        """
+        ema_level = self.ema_level.value
+
+        if ema_level == 0:
+            # No extra conditions
+            return (True, True)
+        elif ema_level == 1:
+            # ema10 only
+            long_cond = df["close"] >= df["ema10"]
+            short_cond = df["close"] <= df["ema10"]
+        elif ema_level == 2:
+            # ema10 and ema20
+            long_cond = (df["close"] >= df["ema10"]) & (df["close"] >= df["ema20"])
+            short_cond = (df["close"] <= df["ema10"]) & (df["close"] <= df["ema20"])
+        elif ema_level == 3:
+            # ema10, ema20, and ema50
+            long_cond = (
+                (df["close"] >= df["ema10"])
+                & (df["close"] >= df["ema20"])
+                & (df["close"] >= df["ema50"])
+            )
+            short_cond = (
+                (df["close"] <= df["ema10"])
+                & (df["close"] <= df["ema20"])
+                & (df["close"] <= df["ema50"])
+            )
+        elif ema_level == 4:
+            # ema10, ema20, ema50, and ema200
+            long_cond = (
+                (df["close"] >= df["ema10"])
+                & (df["close"] >= df["ema20"])
+                & (df["close"] >= df["ema50"])
+                & (df["close"] >= df["ema200"])
+            )
+            short_cond = (
+                (df["close"] <= df["ema10"])
+                & (df["close"] <= df["ema20"])
+                & (df["close"] <= df["ema50"])
+                & (df["close"] <= df["ema200"])
+            )
+        else:
+            # Fallback to no conditions
+            return (True, True)
+
+        return (long_cond, short_cond)
 
     def is_hyperopt_mode(self) -> bool:
         """Check if the current run mode is hyperopt"""
@@ -208,7 +265,9 @@ class FractalStrategy(IStrategy):
             # max_open_trades from strategy config
             max_open_trades = self.config.get("max_open_trades", 1)
             if not isinstance(max_open_trades, int) or max_open_trades <= 0:
-                logger.warning(f"Invalid max_open_trades value: {max_open_trades}. Defaulting to 1.")
+                logger.warning(
+                    f"Invalid max_open_trades value: {max_open_trades}. Defaulting to 1."
+                )
                 max_open_trades = 1
 
             if open_trades_count >= max_open_trades:
@@ -245,6 +304,11 @@ class FractalStrategy(IStrategy):
         """
         Finds peaks and troughs for price and MACD using scipy.signal.find_peaks
         and adds them and their trends to the dataframe.
+
+        Note: scipy.find_peaks is preferred over pandas rolling operations for:
+        - Better performance (optimized C implementation)
+        - More sophisticated peak detection algorithms
+        - Built-in prominence and distance filtering
         """
         # Price peaks and troughs
         # Compute scalar prominence threshold from ATR rolling mean (median to avoid NaN/edge effects)
@@ -782,42 +846,65 @@ class FractalStrategy(IStrategy):
                     & df["small_candle"]
                 )
 
+                # Get dynamic EMA conditions based on ema_level
+                extra_long_cond, extra_short_cond = self._get_ema_conditions(df)
+
                 # --- Combine Triggers and Base Conditions ---
                 # Long Entries
                 if self.use_breakout_trigger.value:
                     long_condition = (
-                        base_long_condition & long_breakout_trigger & long_breakout_condition
+                        base_long_condition
+                        & long_breakout_trigger
+                        & long_breakout_condition
+                        & extra_long_cond
                     )
-                    df.loc[long_condition, ["enter_long", "enter_tag"]] = (1, "breakout")
+                    df.loc[long_condition, "enter_long"] = 1
+                    df.loc[long_condition, "enter_tag"] = "breakout"
 
                 # Use cradle trigger
                 if self.use_cradle_trigger.value:
                     long_rr_cond = df["long_cradle_rr_ratio"] >= 1.0
-                    long_condition = base_long_condition & long_cradle_trigger & long_rr_cond
-                    df.loc[long_condition, ["enter_long", "enter_tag"]] = (1, "cradle")
+                    long_condition = (
+                        base_long_condition & long_cradle_trigger & long_rr_cond & extra_long_cond
+                    )
+                    df.loc[long_condition, "enter_long"] = 1
+                    df.loc[long_condition, "enter_tag"] = "cradle"
 
                 if self.use_lrsi_trigger.value:
                     long_rr_cond = df["long_rr_ratio"] >= self.rr_ratio.value
                     long_condition = (
-                        base_long_condition & cond_ptf_chop & long_lrsi_trigger & long_rr_cond
+                        base_long_condition
+                        & cond_ptf_chop
+                        & long_lrsi_trigger
+                        & long_rr_cond
+                        & extra_long_cond
                     )
-                    df.loc[long_condition, ["enter_long", "enter_tag"]] = (1, "lrsi")
+                    df.loc[long_condition, "enter_long"] = 1
+                    df.loc[long_condition, "enter_tag"] = "lrsi"
 
                 # Short Entries
                 if self.can_short:
                     if self.use_breakout_trigger.value:
                         short_condition = (
-                            base_short_condition & short_breakout_trigger & short_breakout_condition
+                            base_short_condition
+                            & short_breakout_trigger
+                            & short_breakout_condition
+                            & extra_short_cond
                         )
-                        df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "breakout")
+                        df.loc[short_condition, "enter_short"] = 1
+                        df.loc[short_condition, "enter_tag"] = "breakout"
 
                     # Use cradle trigger
                     if self.use_cradle_trigger.value:
                         short_rr_cond = df["short_cradle_rr_ratio"] >= 1.0
                         short_condition = (
-                            base_short_condition & short_cradle_trigger & short_rr_cond
+                            base_short_condition
+                            & short_cradle_trigger
+                            & short_rr_cond
+                            & extra_short_cond
                         )
-                        df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "cradle")
+                        df.loc[short_condition, "enter_short"] = 1
+                        df.loc[short_condition, "enter_tag"] = "cradle"
 
                     if self.use_lrsi_trigger.value:
                         short_rr_cond = df["short_rr_ratio"] >= self.rr_ratio.value
@@ -826,8 +913,10 @@ class FractalStrategy(IStrategy):
                             & cond_ptf_chop
                             & short_lrsi_trigger
                             & short_rr_cond
+                            & extra_short_cond
                         )
-                        df.loc[short_condition, ["enter_short", "enter_tag"]] = (1, "lrsi")
+                        df.loc[short_condition, "enter_short"] = 1
+                        df.loc[short_condition, "enter_tag"] = "lrsi"
 
                 # Limit the number of signals to avoid over-trading
                 # This part might need adjustment if multiple signals can be generated in one candle
@@ -1106,6 +1195,8 @@ class FractalStrategy(IStrategy):
         """
         stop_loss_price = None
         price_diff_to_stop = 0.0
+        take_profit_price = None
+        raw_stop_price = None
 
         side = "long" if not trade.is_short else "short"
         entry_tag = trade.enter_tag if hasattr(trade, "enter_tag") else "lrsi"
@@ -1114,38 +1205,44 @@ class FractalStrategy(IStrategy):
         if entry_tag == "cradle":
             if side == "long":
                 raw_stop_price = last_candle.get("stop_lower")
-                stop_loss_price = raw_stop_price * self.down_slippage
-                price_diff_to_stop = trade.open_rate - stop_loss_price
-                take_profit_price = trade.open_rate + price_diff_to_stop
+                if raw_stop_price is not None:
+                    stop_loss_price = raw_stop_price * self.down_slippage
+                    price_diff_to_stop = trade.open_rate - stop_loss_price
+                    take_profit_price = trade.open_rate + price_diff_to_stop
             elif side == "short":
                 raw_stop_price = last_candle.get("stop_upper")
-                stop_loss_price = raw_stop_price * self.up_slippage
-                price_diff_to_stop = stop_loss_price - trade.open_rate
-                take_profit_price = trade.open_rate - price_diff_to_stop
+                if raw_stop_price is not None:
+                    stop_loss_price = raw_stop_price * self.up_slippage
+                    price_diff_to_stop = stop_loss_price - trade.open_rate
+                    take_profit_price = trade.open_rate - price_diff_to_stop
 
         elif entry_tag == "breakout":
             if side == "long":
                 raw_stop_price = last_candle.get(f"long_atr_stop_{self.primary_timeframe}")
-                stop_loss_price = raw_stop_price * self.down_slippage
-                price_diff_to_stop = trade.open_rate - stop_loss_price
-                take_profit_price = trade.open_rate + price_diff_to_stop
+                if raw_stop_price is not None:
+                    stop_loss_price = raw_stop_price * self.down_slippage
+                    price_diff_to_stop = trade.open_rate - stop_loss_price
+                    take_profit_price = trade.open_rate + price_diff_to_stop
             elif side == "short":
                 raw_stop_price = last_candle.get(f"short_atr_stop_{self.primary_timeframe}")
-                stop_loss_price = raw_stop_price * self.up_slippage
-                price_diff_to_stop = stop_loss_price - trade.open_rate
-                take_profit_price = trade.open_rate - price_diff_to_stop
+                if raw_stop_price is not None:
+                    stop_loss_price = raw_stop_price * self.up_slippage
+                    price_diff_to_stop = stop_loss_price - trade.open_rate
+                    take_profit_price = trade.open_rate - price_diff_to_stop
 
         else:  # Default to lrsi
             if side == "long":
                 raw_stop_price = last_candle.get("long_stop")
-                stop_loss_price = raw_stop_price * self.down_slippage
-                price_diff_to_stop = trade.open_rate - stop_loss_price
-                take_profit_price = trade.open_rate + price_diff_to_stop
+                if raw_stop_price is not None:
+                    stop_loss_price = raw_stop_price * self.down_slippage
+                    price_diff_to_stop = trade.open_rate - stop_loss_price
+                    take_profit_price = trade.open_rate + price_diff_to_stop
             elif side == "short":
                 raw_stop_price = last_candle.get("short_stop")
-                stop_loss_price = raw_stop_price * self.up_slippage
-                price_diff_to_stop = stop_loss_price - trade.open_rate
-                take_profit_price = trade.open_rate - price_diff_to_stop
+                if raw_stop_price is not None:
+                    stop_loss_price = raw_stop_price * self.up_slippage
+                    price_diff_to_stop = stop_loss_price - trade.open_rate
+                    take_profit_price = trade.open_rate - price_diff_to_stop
 
         if side == "long":
             initial_trough = last_candle.get(f"trough_{self.primary_timeframe}")
@@ -1438,7 +1535,9 @@ class FractalStrategy(IStrategy):
             return 0.0
 
         collateral_per_slot = available_stake_amount / available_slots
-        logger.debug(f"collateral per slot: {collateral_per_slot} {available_stake_amount} {available_slots}")
+        logger.debug(
+            f"collateral per slot: {collateral_per_slot} {available_stake_amount} {available_slots}"
+        )
         return collateral_per_slot
 
     def custom_stake_amount(
