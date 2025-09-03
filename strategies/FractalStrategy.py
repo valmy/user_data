@@ -740,9 +740,6 @@ class FractalStrategy(IStrategy):
                     df["laguerre"], self.sell_laguerre_level.value
                 )
 
-                # Populate pivots and their trends
-                # df = self._populate_pivots(df, self.convergence_window.value)
-
                 # Cradle Triggers
                 long_cradle_base = (
                     df["in_cradle"]
