@@ -3,7 +3,6 @@
 # isort: skip_file
 # --- Do not remove these imports ---
 from os import major
-from narwhals import Boolean
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta, timezone
