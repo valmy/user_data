@@ -3,6 +3,7 @@
 # isort: skip_file
 # --- Do not remove these imports ---
 from os import major
+from narwhals import Boolean
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta, timezone
@@ -121,7 +122,7 @@ class FractalStrategy(IStrategy):
 
     # Number of candles the strategy requires before producing valid signals
     # Ensure it's an integer using int() and max() to prevent float values
-    startup_candle_count: int = int(max(50, 3 * ratio_major_to_signal))
+    startup_candle_count: int = int(max(50, 14 * ratio_major_to_signal))
 
     # Trigger type
     use_lrsi_trigger = BooleanParameter(default=True, space="buy", optimize=False)
@@ -146,7 +147,7 @@ class FractalStrategy(IStrategy):
 
     # Laguerre RSI parameters
     laguerre_gamma = DecimalParameter(
-        0.55, 0.70, default=0.68, decimals=2, space="buy", load=True, optimize=False
+        0.55, 0.70, default=0.68, decimals=2, space="buy", load=True, optimize=True
     )
     small_candle_ratio = DecimalParameter(
         1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=False
@@ -159,9 +160,7 @@ class FractalStrategy(IStrategy):
     )  # For short entry, cross below this
 
     # Choppiness Index parameters
-    primary_chop_threshold = IntParameter(
-        35, 60, default=45, space="buy", load=True, optimize=False
-    )
+    primary_chop_threshold = IntParameter(35, 60, default=45, space="buy", load=True, optimize=True)
     major_chop_threshold = IntParameter(35, 50, default=40, space="buy", load=False, optimize=False)
 
     rr_ratio = DecimalParameter(
@@ -170,6 +169,11 @@ class FractalStrategy(IStrategy):
 
     # EMA requirements: 0 = no ema, 1 = ema10, 2 = ema20, 3 = ema50, 4 ema200
     ema_level = IntParameter(0, 4, default=2, space="buy", load=True, optimize=True)
+
+    primary_adx_level = IntParameter(0, 2, default=0, space="buy", optimize=True)
+    major_adx_level = IntParameter(0, 2, default=0, space="buy", optimize=True)
+
+    use_adx = BooleanParameter(default=False, space="buy", optimize=True)
 
     # Custom trade size parameters
     max_risk_per_trade = DecimalParameter(
@@ -238,6 +242,49 @@ class FractalStrategy(IStrategy):
         else:
             # Fallback to no conditions
             return (True, True)
+
+        return (long_cond, short_cond)
+
+    def _get_adx_conditions(
+        self, df: DataFrame, long_cond: pd.Series, short_cond: pd.Series
+    ) -> tuple:
+        """
+        Generate ADX conditions based on adx_level parameter.
+        Returns tuple of (long_condition, short_condition)
+        """
+        if self.primary_adx_level.value == 1:
+            # Convert to boolean and handle NaN values by using boolean indexing
+            weak_trend_primary = df[f"weak_trend_{self.primary_timeframe}"].astype(
+                bool, errors="ignore"
+            )
+            weak_trend_primary = weak_trend_primary.where(~weak_trend_primary.isna(), False)
+            long_cond = long_cond & ~weak_trend_primary
+            short_cond = short_cond & ~weak_trend_primary
+        elif self.primary_adx_level.value == 2:
+            # Convert to boolean and handle NaN values by using boolean indexing
+            strong_trend_primary = df[f"strong_trend_{self.primary_timeframe}"].astype(
+                bool, errors="ignore"
+            )
+            strong_trend_primary = strong_trend_primary.where(~strong_trend_primary.isna(), False)
+            long_cond = long_cond & strong_trend_primary
+            short_cond = short_cond & strong_trend_primary
+
+        if self.major_adx_level.value == 1:
+            # Convert to boolean and handle NaN values by using boolean indexing
+            weak_trend_major = df[f"weak_trend_{self.major_timeframe}"].astype(
+                bool, errors="ignore"
+            )
+            weak_trend_major = weak_trend_major.where(~weak_trend_major.isna(), False)
+            long_cond = long_cond & ~weak_trend_major
+            short_cond = short_cond & ~weak_trend_major
+        elif self.major_adx_level.value == 2:
+            # Convert to boolean and handle NaN values by using boolean indexing
+            strong_trend_major = df[f"strong_trend_{self.major_timeframe}"].astype(
+                bool, errors="ignore"
+            )
+            strong_trend_major = strong_trend_major.where(~strong_trend_major.isna(), False)
+            long_cond = long_cond & strong_trend_major
+            short_cond = short_cond & strong_trend_major
 
         return (long_cond, short_cond)
 
@@ -477,6 +524,14 @@ class FractalStrategy(IStrategy):
         dataframe["chop"] = pta.chop(
             dataframe["high"], dataframe["low"], dataframe["close"], length=14
         )
+
+        # ADX
+        dataframe["adx"] = ta.ADX(
+            dataframe["high"], dataframe["low"], dataframe["close"], timeperiod=14
+        )
+        dataframe["weak_trend"] = dataframe["adx"] < 20
+        dataframe["strong_trend"] = dataframe["adx"] > 25
+
         return dataframe
 
     @informative(major_timeframe)
@@ -551,6 +606,21 @@ class FractalStrategy(IStrategy):
             dataframe["high"], dataframe["low"], dataframe["close"], length=14
         )
 
+        # ADX
+        dataframe["adx"] = ta.ADX(
+            dataframe["high"], dataframe["low"], dataframe["close"], timeperiod=14
+        )
+        dataframe["plus_dm"] = ta.PLUS_DM(dataframe["high"], dataframe["low"], timeperiod=14)
+        dataframe["minus_dm"] = ta.MINUS_DM(dataframe["high"], dataframe["low"], timeperiod=14)
+        dataframe["weak_trend"] = dataframe["adx"] < 20
+        dataframe["strong_trend"] = dataframe["adx"] > 25
+        dataframe["dx_upswing"] = (dataframe["plus_dm"] > dataframe["minus_dm"]) & ~dataframe[
+            "weak_trend"
+        ]
+        dataframe["dx_downswing"] = (dataframe["plus_dm"] < dataframe["minus_dm"]) & ~dataframe[
+            "weak_trend"
+        ]
+
         return dataframe
 
     @informative(long_timeframe)
@@ -608,6 +678,7 @@ class FractalStrategy(IStrategy):
 
         # MACD
         dataframe.ta.macd(fast=12, slow=26, signal=9, append=True)
+        dataframe = self._populate_pivots(dataframe, self.convergence_window.value)
 
         # Donchian Channels (using 36-period window)
         major_period = round(3 * self.ratio_major_to_signal)
@@ -701,6 +772,15 @@ class FractalStrategy(IStrategy):
                         f"ha_downswing column {ha_downswing_col} not found in dataframe columns: {df.columns.to_list()}"
                     )
                     return df
+                dx_upswing_col = f"dx_upswing_{self.major_timeframe}"
+                dx_downswing_col = f"dx_downswing_{self.major_timeframe}"
+
+                if self.use_adx.value:
+                    upswing_col = dx_upswing_col
+                    downswing_col = dx_downswing_col
+                else:
+                    upswing_col = ha_upswing_col
+                    downswing_col = ha_downswing_col
 
                 # --- End Debugging ---
 
@@ -829,14 +909,14 @@ class FractalStrategy(IStrategy):
 
                 # --- Base Entry Conditions (excluding triggers) ---
                 base_long_condition = (
-                    df[ha_upswing_col]
+                    df[upswing_col]
                     & cond_mtf_chop
                     & df["strong_volume"]
                     & df["bullish_candle"]
                     & df["small_candle"]
                 )
                 base_short_condition = (
-                    df[ha_downswing_col]
+                    df[downswing_col]
                     & cond_mtf_chop
                     & df["strong_volume"]
                     & df["bearish_candle"]
@@ -845,6 +925,10 @@ class FractalStrategy(IStrategy):
 
                 # Get dynamic EMA conditions based on ema_level
                 extra_long_cond, extra_short_cond = self._get_ema_conditions(df)
+                # Add adx conditions
+                extra_long_cond, extra_short_cond = self._get_adx_conditions(
+                    df, extra_long_cond, extra_short_cond
+                )
 
                 # --- Combine Triggers and Base Conditions ---
                 # Long Entries
