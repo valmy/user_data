@@ -197,7 +197,11 @@ class FractalStrategy(IStrategy):
     down_slippage = 1 - slippage.value
     up_slippage = 1 + slippage.value
 
-    use_take_profit_2 = False
+    use_take_profit_2 = True
+
+    def __init__(self, config: dict) -> None:
+        super().__init__(config)
+        self.use_take_profit_2 = self.is_hyperopt_mode()
 
     def _get_ema_conditions(self, df: DataFrame) -> tuple:
         """
@@ -334,9 +338,6 @@ class FractalStrategy(IStrategy):
         Define additional, informative pair/interval combinations to be cached from the exchange.
         We need higher timeframes for primary trend detection and major trend confirmations.
         """
-        if self.is_hyperopt_mode():
-            self.use_take_profit_2 = True
-
         pairs = self.dp.current_whitelist()
         informative_pairs = []
 
@@ -685,7 +686,7 @@ class FractalStrategy(IStrategy):
 
         # MACD
         dataframe.ta.macd(fast=12, slow=26, signal=9, append=True)
-        dataframe = self._populate_pivots(dataframe, self.convergence_window.value)
+        # dataframe = self._populate_pivots(dataframe, self.convergence_window.value)
 
         # Donchian Channels (using 36-period window)
         major_period = round(3 * self.ratio_major_to_signal)

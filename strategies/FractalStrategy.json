@@ -25,20 +25,21 @@
       "use_cradle_trigger": false,
       "use_lrsi_trigger": true,
       "volume_threshold": 4.0,
-      "ema_level": 2,
-      "laguerre_gamma": 0.55,
+      "ema_level": 4,
+      "laguerre_gamma": 0.69,
       "major_adx_level": 0,
-      "primary_adx_level": 1,
-      "primary_chop_threshold": 60,
+      "primary_adx_level": 2,
+      "primary_chop_threshold": 57,
       "use_adx": false
     },
     "sell": {
       "atr_stop_ratio": 9.61,
       "sell_laguerre_level": 0.8,
-      "slippage": 0.001
+      "slippage": 0.001,
+      "take_profit_2": 3.0
     },
     "protection": {}
   },
   "ft_stratparam_v": 1,
-  "export_time": "2025-09-10 02:34:16.190554+00:00"
+  "export_time": "2025-09-25 11:22:29.552380+00:00"
 }
