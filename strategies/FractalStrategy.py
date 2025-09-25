@@ -199,10 +199,6 @@ class FractalStrategy(IStrategy):
 
     use_take_profit_2 = True
 
-    def __init__(self, config: dict) -> None:
-        super().__init__(config)
-        self.use_take_profit_2 = self.is_hyperopt_mode()
-
     def _get_ema_conditions(self, df: DataFrame) -> tuple:
         """
         Generate EMA conditions based on ema_level parameter.
@@ -332,6 +328,9 @@ class FractalStrategy(IStrategy):
             return self.get_total_equity() * available_slots / max_open_trades
         else:
             return self.wallets.get_available_stake_amount()
+
+    def bot_start(self) -> None:
+        self.use_take_profit_2 = self.is_hyperopt_mode()
 
     def informative_pairs(self):
         """
