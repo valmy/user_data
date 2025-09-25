@@ -22,6 +22,8 @@ app = typer.Typer(add_completion=False, help="Backtesting analysis script")
 
 def load_backtest_trades(config: Configuration) -> list:
     filename = config.get("exportfilename")
+    if filename is None:
+        filename = Path(config.get("user_data_dir")) / "backtest_results"
     if not filename.is_dir() and not filename.is_file():
         logger.warning("Backtest file is missing skipping trades.")
         return []
@@ -541,6 +543,7 @@ def main(
 
     trades = load_backtest_trades(config)
     print(trades.columns)
+    print(trades)
 
 
 if __name__ == "__main__":
