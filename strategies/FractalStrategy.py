@@ -8,6 +8,8 @@ import pandas as pd
 from datetime import datetime, timedelta, timezone
 from pandas import DataFrame
 from typing import Dict, Optional, Union, Tuple
+
+from traitlets import default
 from freqtrade.ft_types.plot_annotation_type import AnnotationType
 
 from freqtrade.strategy import (
@@ -131,12 +133,12 @@ class FractalStrategy(IStrategy):
     use_breakout_trigger = BooleanParameter(default=False, space="buy", optimize=False)
 
     # Parameters for find_peaks
-    peak_distance = IntParameter(3, 10, default=5, space="breakout", optimize=True)
+    peak_distance = IntParameter(3, 10, default=5, space="breakout", optimize=False)
     peak_prominence_atr_factor = DecimalParameter(
-        0.5, 2.0, default=1.0, decimals=1, space="breakout", optimize=True
+        0.5, 2.0, default=1.0, decimals=1, space="breakout", optimize=False
     )
     macd_prominence_std_factor = DecimalParameter(
-        0.5, 2.0, default=1.0, decimals=1, space="breakout", optimize=True
+        0.5, 2.0, default=1.0, decimals=1, space="breakout", optimize=False
     )
 
     # Parameters for tuning
@@ -146,7 +148,7 @@ class FractalStrategy(IStrategy):
 
     # Laguerre RSI parameters
     laguerre_gamma = DecimalParameter(
-        0.50, 0.70, default=0.62, decimals=2, space="buy", load=True, optimize=True
+        0.50, 0.70, default=0.62, decimals=2, space="buy", load=True, optimize=False
     )
     small_candle_ratio = DecimalParameter(
         1.0, 5.0, default=2.0, decimals=1, space="buy", load=True, optimize=False
@@ -159,7 +161,7 @@ class FractalStrategy(IStrategy):
     )  # For short entry, cross below this
 
     # Choppiness Index parameters
-    primary_chop_threshold = IntParameter(35, 60, default=45, space="buy", load=True, optimize=True)
+    primary_chop_threshold = IntParameter(35, 60, default=45, space="buy", load=True, optimize=False)
     major_chop_threshold = IntParameter(35, 50, default=40, space="buy", load=False, optimize=False)
 
     rr_ratio = DecimalParameter(
@@ -167,12 +169,12 @@ class FractalStrategy(IStrategy):
     )
 
     # EMA requirements: 0 = no ema, 1 = ema10, 2 = ema20, 3 = ema50, 4 ema200
-    ema_level = IntParameter(0, 4, default=2, space="buy", load=True, optimize=True)
+    ema_level = IntParameter(0, 4, default=2, space="buy", load=True, optimize=False)
 
-    primary_adx_level = IntParameter(0, 2, default=0, space="buy", optimize=True)
-    major_adx_level = IntParameter(0, 2, default=0, space="buy", optimize=True)
+    primary_adx_level = IntParameter(0, 2, default=0, space="buy", optimize=False)
+    major_adx_level = IntParameter(0, 2, default=0, space="buy", optimize=False)
 
-    use_adx = BooleanParameter(default=False, space="buy", optimize=True)
+    use_adx = BooleanParameter(default=False, space="buy", optimize=False)
 
     # Custom trade size parameters
     max_risk_per_trade = DecimalParameter(
@@ -181,7 +183,7 @@ class FractalStrategy(IStrategy):
 
     # Sell parameters
     atr_stop_ratio = DecimalParameter(
-        0.05, 10.0, default=5.0, decimals=2, space="sell", load=True, optimize=True
+        0.05, 10.0, default=5.0, decimals=2, space="sell", load=True, optimize=False
     )
 
     breakout_stop_ratio = DecimalParameter(
@@ -192,12 +194,13 @@ class FractalStrategy(IStrategy):
         0.001, 0.005, default=0.001, decimals=3, space="sell", load=True, optimize=False
     )
     take_profit_2 = DecimalParameter(
-        1.0, 10.0, default=3.0, decimals=1, space="sell", load=True, optimize=False
+        1.5, 6.0, default=3.0, decimals=1, space="sell", load=True, optimize=True
     )
     down_slippage = 1 - slippage.value
     up_slippage = 1 + slippage.value
 
-    use_take_profit_2 = True
+    use_take_profit_2 = False
+    use_take_profit_2_as_sl = True
 
     def _get_ema_conditions(self, df: DataFrame) -> tuple:
         """
@@ -331,6 +334,7 @@ class FractalStrategy(IStrategy):
 
     def bot_start(self) -> None:
         self.use_take_profit_2 = self.is_hyperopt_mode()
+        self.use_take_profit_2_as_sl = ~self.is_hyperopt_mode()
 
     def informative_pairs(self):
         """
@@ -1299,8 +1303,7 @@ class FractalStrategy(IStrategy):
                     price_diff_to_stop = trade.open_rate - stop_loss_price
                     take_profit_price = trade.open_rate + price_diff_to_stop
                     if (
-                        self.use_take_profit_2
-                        and self.take_profit_2.value
+                        self.take_profit_2.value
                         and self.take_profit_2.value > 1.0
                     ):
                         take_profit_2_price = (
@@ -1313,8 +1316,7 @@ class FractalStrategy(IStrategy):
                     price_diff_to_stop = stop_loss_price - trade.open_rate
                     take_profit_price = trade.open_rate - price_diff_to_stop
                     if (
-                        self.use_take_profit_2
-                        and self.take_profit_2.value
+                        self.take_profit_2.value
                         and self.take_profit_2.value > 1.0
                     ):
                         take_profit_2_price = (
@@ -1329,8 +1331,7 @@ class FractalStrategy(IStrategy):
                     price_diff_to_stop = trade.open_rate - stop_loss_price
                     take_profit_price = trade.open_rate + price_diff_to_stop
                     if (
-                        self.use_take_profit_2
-                        and self.take_profit_2.value
+                        self.take_profit_2.value
                         and self.take_profit_2.value > 1.0
                     ):
                         take_profit_2_price = (
@@ -1343,8 +1344,7 @@ class FractalStrategy(IStrategy):
                     price_diff_to_stop = stop_loss_price - trade.open_rate
                     take_profit_price = trade.open_rate - price_diff_to_stop
                     if (
-                        self.use_take_profit_2
-                        and self.take_profit_2.value
+                        self.take_profit_2.value
                         and self.take_profit_2.value > 1.0
                     ):
                         take_profit_2_price = (
@@ -1359,8 +1359,7 @@ class FractalStrategy(IStrategy):
                     price_diff_to_stop = trade.open_rate - stop_loss_price
                     take_profit_price = trade.open_rate + price_diff_to_stop
                     if (
-                        self.use_take_profit_2
-                        and self.take_profit_2.value
+                        self.take_profit_2.value
                         and self.take_profit_2.value > 1.0
                     ):
                         take_profit_2_price = (
@@ -1373,8 +1372,7 @@ class FractalStrategy(IStrategy):
                     price_diff_to_stop = stop_loss_price - trade.open_rate
                     take_profit_price = trade.open_rate - price_diff_to_stop
                     if (
-                        self.use_take_profit_2
-                        and self.take_profit_2.value
+                        self.take_profit_2.value
                         and self.take_profit_2.value > 1.0
                     ):
                         take_profit_2_price = (
@@ -1408,6 +1406,47 @@ class FractalStrategy(IStrategy):
             logger.info(f"Setting take_profit_2_price={take_profit_2_price} for {trade.pair}")
 
         return None
+
+    def _update_stoploss_to_take_profit_2(
+        self,
+        pair: str,
+        trade: Trade,
+        current_rate: float,
+        current_stop: float
+    ) -> float:
+        """
+        Update current_stop to take_profit_2 if conditions are met.
+        Returns the updated stop value or original value if conditions not met.
+
+        Conditions:
+        - use_take_profit_2_as_sl must be True
+        - take_profit_2_price must exist
+        - current_price must have surpassed take_profit_2_price
+        """
+        if not self.use_take_profit_2_as_sl:
+            return current_stop
+
+        take_profit_2_price = trade.get_custom_data(key="take_profit_2_price")
+        if take_profit_2_price is None:
+            return current_stop
+
+        # Check if current price has surpassed take_profit_2
+        if not trade.is_short:  # Long position
+            if current_rate >= take_profit_2_price and take_profit_2_price > current_stop:
+                logger.info(
+                    f"Updated stoploss to take_profit_2 for {pair} (long): "
+                    f"current_rate={current_rate:.6f}, take_profit_2={take_profit_2_price:.6f}"
+                )
+                return take_profit_2_price
+        else:  # Short position
+            if current_rate <= take_profit_2_price and take_profit_2_price < current_stop:
+                logger.info(
+                    f"Updated stoploss to take_profit_2 for {pair} (short): "
+                    f"current_rate={current_rate:.6f}, take_profit_2={take_profit_2_price:.6f}"
+                )
+                return take_profit_2_price
+
+        return current_stop
 
     def custom_stoploss(
         self,
@@ -1545,6 +1584,11 @@ class FractalStrategy(IStrategy):
                     else:  # for breakout and lrsi
                         current_stop = last_candle.get(f"trough_{self.primary_timeframe}", 0)
 
+                    # Update current_stop to take_profit_2 if conditions are met
+                    current_stop = self._update_stoploss_to_take_profit_2(
+                        pair, trade, current_rate, current_stop
+                    )
+
                     # Update dynamic stop if we're using dynamic stop and current stop is higher
                     if (
                         use_dynamic_stop
@@ -1572,6 +1616,11 @@ class FractalStrategy(IStrategy):
                         current_stop = last_candle.get(
                             f"peak_{self.primary_timeframe}", float("inf")
                         )
+
+                    # Update current_stop to take_profit_2 if conditions are met
+                    current_stop = self._update_stoploss_to_take_profit_2(
+                        pair, trade, current_rate, current_stop
+                    )
 
                     # Update dynamic stop if we're using dynamic stop and current stop is lower
                     if (
@@ -1912,24 +1961,26 @@ class FractalStrategy(IStrategy):
             return
 
         take_profit_price = trade.get_custom_data(key="take_profit_price")
-        take_profit_2_price = trade.get_custom_data(key="take_profit_2_price")
         take_profit_reduced = trade.get_custom_data(key="take_profit_reduced", default=False)
 
-        # TP2 full-close logic has priority over TP1 partial reduction
-        tp2_reached = False
-        if self.use_take_profit_2 and take_profit_2_price is not None:
-            if not trade.is_short:  # Long position
-                tp2_reached = current_rate >= take_profit_2_price
-            else:  # Short position
-                tp2_reached = current_rate <= take_profit_2_price
+        if ~self.use_take_profit_2_as_sl:
+            take_profit_2_price = trade.get_custom_data(key="take_profit_2_price")
 
-        if tp2_reached:
-            side_text = "short" if trade.is_short else "long"
-            logger.info(
-                f"Take profit 2 reached for {trade.pair} ({side_text}) at {current_rate:.6f} "
-                f"(target: {take_profit_2_price:.6f}). Closing full position."
-            )
-            return -trade.stake_amount
+            # TP2 full-close logic has priority over TP1 partial reduction
+            tp2_reached = False
+            if self.use_take_profit_2 and take_profit_2_price is not None:
+                if not trade.is_short:  # Long position
+                    tp2_reached = current_rate >= take_profit_2_price
+                else:  # Short position
+                    tp2_reached = current_rate <= take_profit_2_price
+
+            if tp2_reached:
+                side_text = "short" if trade.is_short else "long"
+                logger.info(
+                    f"Take profit 2 reached for {trade.pair} ({side_text}) at {current_rate:.6f} "
+                    f"(target: {take_profit_2_price:.6f}). Closing full position."
+                )
+                return -trade.stake_amount
 
         # Check if we've reached take profit price and haven't reduced position yet
         # For long positions: current_rate >= take_profit_price
@@ -1956,24 +2007,6 @@ class FractalStrategy(IStrategy):
             # To exit 50% of position: 0.5 * trade.amount = abs(stake_amount) * trade.amount / trade.stake_amount
             # Solving: stake_amount = -0.5 * trade.stake_amount (negative for reduction)
             reduction_stake_amount = -0.5 * trade.stake_amount
-
-            # Calculate expected amount to be exited for validation
-            # expected_exit_amount = (
-            #     abs(reduction_stake_amount) * trade.amount / trade.stake_amount
-            # )
-            # expected_exit_percentage = (expected_exit_amount / trade.amount) * 100
-
-            # logger.debug(f"Position reduction calculation for {trade.pair}:")
-            # logger.debug(
-            #     f"  Current position: {trade.amount:.8f} {trade.base_currency}"
-            # )
-            # logger.debug(
-            #     f"  Current stake: {trade.stake_amount:.6f} {trade.stake_currency}"
-            # )
-            # logger.debug(f"  Reduction stake amount: {reduction_stake_amount:.6f}")
-            # logger.debug(
-            #     f"  Expected exit amount: {expected_exit_amount:.8f} ({expected_exit_percentage:.1f}%)"
-            # )
 
             return reduction_stake_amount
 
