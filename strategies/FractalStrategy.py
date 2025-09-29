@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, timezone
 from pandas import DataFrame
 from typing import Dict, Optional, Union, Tuple
 
-from traitlets import default
 from freqtrade.ft_types.plot_annotation_type import AnnotationType
 
 from freqtrade.strategy import (
@@ -161,7 +160,9 @@ class FractalStrategy(IStrategy):
     )  # For short entry, cross below this
 
     # Choppiness Index parameters
-    primary_chop_threshold = IntParameter(35, 60, default=45, space="buy", load=True, optimize=False)
+    primary_chop_threshold = IntParameter(
+        35, 60, default=45, space="buy", load=True, optimize=False
+    )
     major_chop_threshold = IntParameter(35, 50, default=40, space="buy", load=False, optimize=False)
 
     rr_ratio = DecimalParameter(
@@ -1302,10 +1303,7 @@ class FractalStrategy(IStrategy):
                     stop_loss_price = raw_stop_price * self.down_slippage
                     price_diff_to_stop = trade.open_rate - stop_loss_price
                     take_profit_price = trade.open_rate + price_diff_to_stop
-                    if (
-                        self.take_profit_2.value
-                        and self.take_profit_2.value > 1.0
-                    ):
+                    if self.take_profit_2.value and self.take_profit_2.value > 1.0:
                         take_profit_2_price = (
                             trade.open_rate + float(self.take_profit_2.value) * price_diff_to_stop
                         )
@@ -1315,10 +1313,7 @@ class FractalStrategy(IStrategy):
                     stop_loss_price = raw_stop_price * self.up_slippage
                     price_diff_to_stop = stop_loss_price - trade.open_rate
                     take_profit_price = trade.open_rate - price_diff_to_stop
-                    if (
-                        self.take_profit_2.value
-                        and self.take_profit_2.value > 1.0
-                    ):
+                    if self.take_profit_2.value and self.take_profit_2.value > 1.0:
                         take_profit_2_price = (
                             trade.open_rate - float(self.take_profit_2.value) * price_diff_to_stop
                         )
@@ -1330,10 +1325,7 @@ class FractalStrategy(IStrategy):
                     stop_loss_price = raw_stop_price * self.down_slippage
                     price_diff_to_stop = trade.open_rate - stop_loss_price
                     take_profit_price = trade.open_rate + price_diff_to_stop
-                    if (
-                        self.take_profit_2.value
-                        and self.take_profit_2.value > 1.0
-                    ):
+                    if self.take_profit_2.value and self.take_profit_2.value > 1.0:
                         take_profit_2_price = (
                             trade.open_rate + float(self.take_profit_2.value) * price_diff_to_stop
                         )
@@ -1343,10 +1335,7 @@ class FractalStrategy(IStrategy):
                     stop_loss_price = raw_stop_price * self.up_slippage
                     price_diff_to_stop = stop_loss_price - trade.open_rate
                     take_profit_price = trade.open_rate - price_diff_to_stop
-                    if (
-                        self.take_profit_2.value
-                        and self.take_profit_2.value > 1.0
-                    ):
+                    if self.take_profit_2.value and self.take_profit_2.value > 1.0:
                         take_profit_2_price = (
                             trade.open_rate - float(self.take_profit_2.value) * price_diff_to_stop
                         )
@@ -1358,10 +1347,7 @@ class FractalStrategy(IStrategy):
                     stop_loss_price = raw_stop_price * self.down_slippage
                     price_diff_to_stop = trade.open_rate - stop_loss_price
                     take_profit_price = trade.open_rate + price_diff_to_stop
-                    if (
-                        self.take_profit_2.value
-                        and self.take_profit_2.value > 1.0
-                    ):
+                    if self.take_profit_2.value and self.take_profit_2.value > 1.0:
                         take_profit_2_price = (
                             trade.open_rate + float(self.take_profit_2.value) * price_diff_to_stop
                         )
@@ -1371,10 +1357,7 @@ class FractalStrategy(IStrategy):
                     stop_loss_price = raw_stop_price * self.up_slippage
                     price_diff_to_stop = stop_loss_price - trade.open_rate
                     take_profit_price = trade.open_rate - price_diff_to_stop
-                    if (
-                        self.take_profit_2.value
-                        and self.take_profit_2.value > 1.0
-                    ):
+                    if self.take_profit_2.value and self.take_profit_2.value > 1.0:
                         take_profit_2_price = (
                             trade.open_rate - float(self.take_profit_2.value) * price_diff_to_stop
                         )
@@ -1408,11 +1391,7 @@ class FractalStrategy(IStrategy):
         return None
 
     def _update_stoploss_to_take_profit_2(
-        self,
-        pair: str,
-        trade: Trade,
-        current_rate: float,
-        current_stop: float
+        self, pair: str, trade: Trade, current_rate: float, current_stop: float
     ) -> float:
         """
         Update current_stop to take_profit_2 if conditions are met.
